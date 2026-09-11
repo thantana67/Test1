@@ -1,5 +1,6 @@
 package com.example
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.newExtractorLink
@@ -53,21 +54,20 @@ class ExampleProvider : MainAPI() {
         val id = data
         val meta = app.get("https://archive.org/metadata/$id").parsedSafe<ArchiveMetadata>() ?: return false
 
-        val videoExtensions = listOf(".mp4", ".m4v", ".webm", ".ogv")
         val videoFiles = meta.files?.filter { file ->
-            val name = file.name ?: return@filter false
-            videoExtensions.any { name.lowercase().endsWith(it) }
+            file.name?.lowercase()?.endsWith(".mp4") == true
         } ?: emptyList()
 
         if (videoFiles.isEmpty()) return false
 
         videoFiles.forEach { file ->
-            val encodedName = java.net.URLEncoder.encode(file.name, "UTF-8").replace("+", "%20")
+            val fileName = file.name ?: return@forEach
+            val encodedName = java.net.URLEncoder.encode(fileName, "UTF-8").replace("+", "%20")
             val videoUrl = "https://archive.org/download/$id/$encodedName"
             callback(
                 newExtractorLink(
                     this.name,
-                    "${this.name} - ${file.name}",
+                    "${this.name} - ${file.format ?: fileName}",
                     videoUrl
                 )
             )
@@ -76,10 +76,20 @@ class ExampleProvider : MainAPI() {
     }
 }
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class ArchiveSearchResponse(val response: ArchiveResponseBody?)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class ArchiveResponseBody(val docs: List<ArchiveDoc>?)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class ArchiveDoc(val identifier: String?, val title: String?)
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class ArchiveMetadata(val metadata: ArchiveMeta?, val files: List<ArchiveFile>?)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class ArchiveMeta(val title: String?, val description: String?)
-data class ArchiveFile(val name: String?)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class ArchiveFile(val name: String?, val format: String?)
