@@ -4,6 +4,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
+import java.net.URLEncoder
 
 class AnimeWakuProvider : MainAPI() {
     override var mainUrl = "https://anime-waku.com"
@@ -12,42 +13,43 @@ class AnimeWakuProvider : MainAPI() {
     override var lang = "th"
     override val hasMainPage = true
 
+    private val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+
     override val mainPage = mainPageOf(
         "$mainUrl/page/" to "อนิเมะอัปเดตล่าสุด",
-        "$mainUrl/catalog/ซับไทย/page/" to "อนิเมะซับไทย",
-        "$mainUrl/catalog/พากย์ไทย/page/" to "อนิเมะพากย์ไทย"
+        "$mainUrl/catalog/${URLEncoder.encode("ซับไทย", "UTF-8")}/page/" to "อนิเมะซับไทย",
+        "$mainUrl/catalog/${URLEncoder.encode("พากย์ไทย", "UTF-8")}/page/" to "อนิเมะพากย์ไทย"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // หน้า 1 ให้ดึง URL หลักตรงๆ ถ้าหน้าถัดไปค่อยต่อ /page/X/
-        val url = if (page <= 1) {
+        val requestUrl = if (page <= 1) {
             request.data.removeSuffix("page/")
         } else {
             "${request.data}$page/"
         }
 
-        val document = app.get(
-            url = url,
+        val res = app.get(
+            url = requestUrl,
             headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                "User-Agent" to userAgent,
+                "Referer" to "$mainUrl/"
             )
-        ).document
+        )
 
-        // ดึงการ์ดอนิเมะของ DooPlay
-        val homeItems = document.select("div.items article.item, .content .items article, div.item.tvshows, div.item.movies").mapNotNull {
-            it.toSearchResult()
-        }
+        val document = res.document
+
+        // คลุม Selector ทุกแบบของ DooPlay
+        val elements = document.select("div.items article, #archive-content article, .content .items .item, article.item")
+        val homeItems = elements.mapNotNull { it.toSearchResult() }
+
         return newHomePageResponse(request.name, homeItems)
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        // ดึงชื่อเรื่อง
-        val title = this.selectFirst(".data h3 a, h3 a, .title a")?.text() ?: return null
+        val titleElement = this.selectFirst(".data h3 a, h3 a, .title a, header h2 a") ?: return null
+        val title = titleElement.text().trim()
+        val href = fixUrlNull(titleElement.attr("href")) ?: fixUrlNull(this.selectFirst("a")?.attr("href")) ?: return null
 
-        // ดึงลิงก์ไปหน้าอนิเมะ
-        val href = fixUrlNull(this.selectFirst(".data h3 a, .poster a, a")?.attr("href")) ?: return null
-
-        // ดึงรูปโปสเตอร์ (แก้จุด Lazy load ของ DooPlay/WP Rocket)
         val img = this.selectFirst(".poster img, img")
         val rawPoster = img?.attr("data-lazy-src")?.ifEmpty { null }
             ?: img?.attr("data-src")?.ifEmpty { null }
@@ -60,22 +62,32 @@ class AnimeWakuProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val document = app.get("$mainUrl/?s=$query").document
-        return document.select("div.items article, .result-item, .content .items .item").mapNotNull {
+        val encodedQuery = URLEncoder.encode(query, "UTF-8")
+        val document = app.get(
+            url = "$mainUrl/?s=$encodedQuery",
+            headers = mapOf("User-Agent" to userAgent)
+        ).document
+
+        return document.select("div.items article, #archive-content article, .result-item, .content .items .item, article.item").mapNotNull {
             it.toSearchResult()
         }
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val document = app.get(url).document
+        val document = app.get(
+            url = url,
+            headers = mapOf("User-Agent" to userAgent)
+        ).document
 
         val title = document.selectFirst(".sheader .data h1")?.text()
             ?: document.selectFirst("h1")?.text()
             ?: "Unknown"
 
-        val poster = fixUrlNull(document.selectFirst(".sheader .poster img")?.let {
-            it.attr("data-lazy-src").ifEmpty { it.attr("src") }
-        })
+        val img = document.selectFirst(".sheader .poster img, .poster img")
+        val rawPoster = img?.attr("data-lazy-src")?.ifEmpty { null }
+            ?: img?.attr("data-src")?.ifEmpty { null }
+            ?: img?.attr("src")?.ifEmpty { null }
+        val poster = fixUrlNull(rawPoster)
 
         val description = document.selectFirst("#episodes .wp-content p")?.text()
 
@@ -92,9 +104,12 @@ class AnimeWakuProvider : MainAPI() {
             epElements.forEachIndexed { index, ep ->
                 val epHref = fixUrlNull(ep.selectFirst(".episodiotitle a")?.attr("href")) ?: return@forEachIndexed
                 val epName = ep.selectFirst(".episodiotitle a")?.text() ?: "Episode ${index + 1}"
-                val epPoster = fixUrlNull(ep.selectFirst("img")?.let {
-                    it.attr("data-lazy-src").ifEmpty { it.attr("src") }
-                })
+
+                val epImg = ep.selectFirst("img")
+                val rawEpPoster = epImg?.attr("data-lazy-src")?.ifEmpty { null }
+                    ?: epImg?.attr("data-src")?.ifEmpty { null }
+                    ?: epImg?.attr("src")?.ifEmpty { null }
+                val epPoster = fixUrlNull(rawEpPoster)
 
                 targetList.add(newEpisode(epHref) {
                     this.name = epName
@@ -118,7 +133,10 @@ class AnimeWakuProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val document = app.get(data).document
+        val document = app.get(
+            url = data,
+            headers = mapOf("User-Agent" to userAgent)
+        ).document
         val playerOptions = document.select("ul#playeroptionsul li.dooplay_player_option")
 
         for (option in playerOptions) {
@@ -128,7 +146,6 @@ class AnimeWakuProvider : MainAPI() {
 
             if (postId.isEmpty() || nume.isEmpty()) continue
 
-            // ขั้นตอนที่ 1: เรียก AJAX ของ DooPlay เพื่อเอา wrapper iframe
             val ajaxHtml = app.post(
                 url = "$mainUrl/wp-admin/admin-ajax.php",
                 data = mapOf(
@@ -139,25 +156,23 @@ class AnimeWakuProvider : MainAPI() {
                 ),
                 headers = mapOf(
                     "X-Requested-With" to "XMLHttpRequest",
-                    "Referer" to data
+                    "Referer" to data,
+                    "User-Agent" to userAgent
                 )
             ).text
 
             val wrapperUrl = fixUrlNull(Jsoup.parse(ajaxHtml).selectFirst("iframe")?.attr("src")) ?: continue
 
-            // ขั้นตอนที่ 2: โหลดหน้า wrapper พร้อม Referer เพื่อข้าม Cloudflare WAF
             val wrapperDoc = app.get(
                 url = wrapperUrl,
                 referer = data,
                 headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    "User-Agent" to userAgent
                 )
             ).document
 
-            // ขั้นตอนที่ 3: ดึง iframe embedvideo (DooDee Player)
             val embedUrl = fixUrlNull(wrapperDoc.selectFirst("iframe#embedvideo")?.attr("src")) ?: continue
 
-            // ขั้นตอนที่ 4: ส่งต่อให้ Extractor ถอดสตรีมวิดีโอ
             loadExtractor(embedUrl, wrapperUrl, subtitleCallback, callback)
         }
         return true
