@@ -52,9 +52,26 @@ class ExampleProvider : MainAPI() {
     ): Boolean {
         val id = data
         val meta = app.get("https://archive.org/metadata/$id").parsedSafe<ArchiveMetadata>() ?: return false
-        val videoFile = meta.files?.firstOrNull { it.name?.endsWith(".mp4") == true } ?: return false
-        val videoUrl = "https://archive.org/download/$id/${videoFile.name}"
-        callback(newExtractorLink(this.name, this.name, videoUrl))
+
+        val videoExtensions = listOf(".mp4", ".m4v", ".webm", ".ogv")
+        val videoFiles = meta.files?.filter { file ->
+            val name = file.name ?: return@filter false
+            videoExtensions.any { name.lowercase().endsWith(it) }
+        } ?: emptyList()
+
+        if (videoFiles.isEmpty()) return false
+
+        videoFiles.forEach { file ->
+            val encodedName = java.net.URLEncoder.encode(file.name, "UTF-8").replace("+", "%20")
+            val videoUrl = "https://archive.org/download/$id/$encodedName"
+            callback(
+                newExtractorLink(
+                    this.name,
+                    "${this.name} - ${file.name}",
+                    videoUrl
+                )
+            )
+        }
         return true
     }
 }
