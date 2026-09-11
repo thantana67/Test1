@@ -325,18 +325,16 @@ class AnimeWakuProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // ส่งลิงก์วิดีโอทดสอบ (Big Buck Bunny) เข้าไปตรงๆ
-        callback.invoke(
-            ExtractorLink(
-                source = name,
-                name = "Test Link Work!",
-                url = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-                referer = mainUrl,
-                quality = Qualities.P720.value,
-                type = ExtractorLinkType.VIDEO
-            )
-        )
-        return true
+        val document = app.get(url = data, headers = defaultHeaders).document
+
+        // ค้นหา Hash จากหน้าเว็บ
+        val finalHtml = document.html()
+        val hashMatch = Regex("""[a-fA-F0-9]{32}""").find(finalHtml)?.value ?: "test_hash_not_found"
+
+        val testUrl = "https://player-ok-goal.doodee-player.com/m3u8/$hashMatch-720.txt"
+
+        // พ่น URL ออกมาดูบนหน้าจอทันทีเพื่อตรวจสอบ
+        throw ErrorLoadingException("Generated URL: $testUrl")
     }
 
     // ------------------------------------------------------------
