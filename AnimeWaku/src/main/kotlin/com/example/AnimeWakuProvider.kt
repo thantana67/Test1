@@ -325,13 +325,19 @@ class AnimeWakuProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        try {
-            val document = app.get(url = data, headers = defaultHeaders).document
-            val htmlSize = document.html().length
-            throw ErrorLoadingException("SUCCESS - HTML Size: $htmlSize")
-        } catch (e: Exception) {
-            throw ErrorLoadingException("CATCH ERROR: ${e.message}")
-        }
+        // ส่งปุ่มจำลองขึ้นไปแสดงบนหน้าจอแอปทันทีที่ฟังก์ชันทำงาน
+        callback.invoke(
+            newExtractorLink(
+                source = name,
+                name = ">>> ฟังก์ชันทำงานแล้วจ้า <<<",
+                url = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
+                type = ExtractorLinkType.VIDEO
+            ) {
+                this.referer = mainUrl
+                this.quality = Qualities.P720.value
+            }
+        )
+        return true
     }
 
     // ------------------------------------------------------------
