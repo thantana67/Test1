@@ -325,19 +325,75 @@ class AnimeWakuProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // ส่งปุ่มจำลองขึ้นไปแสดงบนหน้าจอแอปทันทีที่ฟังก์ชันทำงาน
-        callback.invoke(
-            newExtractorLink(
-                source = name,
-                name = ">>> ฟังก์ชันทำงานแล้วจ้า <<<",
-                url = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
-                type = ExtractorLinkType.VIDEO
-            ) {
-                this.referer = mainUrl
-                this.quality = Qualities.P720.value
+        try {
+            val document = app.get(url = data, headers = defaultHeaders).document
+
+            // 1. ค้นหาปุ่มตัวเล่น
+            val allOptions = document.select("ul#playeroptionsul li, li.dooplay_player_option")
+            val targetOption = allOptions.find {
+                it.text().contains("2") || it.attr("data-nume") == "2"
+            } ?: allOptions.firstOrNull()
+
+            if (targetOption == null) {
+                // ถ้าหาปุ่มไม่เจอ ส่งลิงก์สำรองเพื่อให้แอปไม่พัง
+                callback.invoke(
+                    newExtractorLink(
+                        source = name,
+                        name = "$name (Fallback Test)",
+                        url = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+                        type = ExtractorLinkType.VIDEO
+                    ) {
+                        this.quality = Qualities.P720.value
+                    }
+                )
+                return true
             }
-        )
-        return true
+
+            val postId = targetOption.attr("data-post").trim()
+            val nume = targetOption.attr("data-nume").trim()
+            val type = targetOption.attr("data-type").trim()
+
+            // 2. เรียก AJAX ดึง Iframe
+            val ajaxRes = app.post(
+                url = "$mainUrl/wp-admin/admin-ajax.php",
+                data = mapOf(
+                    "action" to "doo_player_ajax",
+                    "post" to postId,
+                    "nume" to nume,
+                    "type" to type
+                ),
+                headers = defaultHeaders + mapOf(
+                    "X-Requested-With" to "XMLHttpRequest",
+                    "Referer" to data
+                )
+            )
+
+            val rawIframe = org.jsoup.Jsoup.parse(ajaxRes.text).selectFirst("iframe")?.attr("src") ?: return false
+            val wrapperUrl = fixUrlNull(rawIframe) ?: return false
+
+            // 3. ดึงหน้า Player มาแกะหา Hash
+            val playerHtml = app.get(wrapperUrl, referer = data, headers = defaultHeaders).text
+            val hashMatch = Regex("""[a-fA-F0-9]{32}""").find(playerHtml)?.value
+
+            if (hashMatch != null) {
+                val streamUrl = "https://player-ok-goal.doodee-player.com/m3u8/$hashMatch-720.txt"
+                callback.invoke(
+                    newExtractorLink(
+                        source = name,
+                        name = "$name DooDee 720p",
+                        url = streamUrl,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = wrapperUrl
+                        this.quality = Qualities.P720.value
+                    }
+                )
+                return true
+            }
+
+        } catch (_: Exception) { }
+
+        return false
     }
 
     // ------------------------------------------------------------
