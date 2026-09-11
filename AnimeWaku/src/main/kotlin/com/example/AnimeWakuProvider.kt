@@ -325,8 +325,18 @@ class AnimeWakuProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // เมื่อกดเลือกตอน ดูว่าแอปวิ่งมาถึงตรงนี้และส่ง URL อะไรมา
-        throw ErrorLoadingException("DEBUG loadLinks: ทำงานแล้ว! URL ตอนคือ = $data")
+        // ส่งลิงก์วิดีโอทดสอบ (Big Buck Bunny) เข้าไปตรงๆ
+        callback.invoke(
+            ExtractorLink(
+                source = name,
+                name = "Test Link Work!",
+                url = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+                referer = mainUrl,
+                quality = Qualities.P720.value,
+                type = ExtractorLinkType.VIDEO
+            )
+        )
+        return true
     }
 
     // ------------------------------------------------------------
