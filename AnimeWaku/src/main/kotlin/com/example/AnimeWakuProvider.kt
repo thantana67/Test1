@@ -13,33 +13,35 @@ class AnimeWakuProvider : MainAPI() {
     override var lang = "th"
     override val hasMainPage = true
 
-    private val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    // กำหนด Headers ให้ตรงกับ Android Chrome เต็มรูปแบบ
+    private val defaultHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language" to "th-TH,th;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Sec-Ch-Ua" to "\"Not-A.Brand\";v=\"99\", \"Chromium\";v=\"124\"",
+        "Sec-Ch-Ua-Mobile" to "?1",
+        "Sec-Ch-Ua-Platform" to "\"Android\"",
+        "Sec-Fetch-Dest" to "document",
+        "Sec-Fetch-Mode" to "navigate",
+        "Sec-Fetch-Site" to "none",
+        "Sec-Fetch-User" to "?1",
+        "Upgrade-Insecure-Requests" to "1"
+    )
 
     override val mainPage = mainPageOf(
-        "$mainUrl/page/" to "อนิเมะอัปเดตล่าสุด",
-        "$mainUrl/catalog/${URLEncoder.encode("ซับไทย", "UTF-8")}/page/" to "อนิเมะซับไทย",
-        "$mainUrl/catalog/${URLEncoder.encode("พากย์ไทย", "UTF-8")}/page/" to "อนิเมะพากย์ไทย"
+        "$mainUrl/" to "อนิเมะอัปเดตล่าสุด"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val requestUrl = if (page <= 1) {
-            request.data.removeSuffix("page/")
-        } else {
-            "${request.data}$page/"
-        }
+        val url = if (page <= 1) mainUrl else "$mainUrl/page/$page/"
 
         val res = app.get(
-            url = requestUrl,
-            headers = mapOf(
-                "User-Agent" to userAgent,
-                "Referer" to "$mainUrl/"
-            )
+            url = url,
+            headers = defaultHeaders
         )
 
         val document = res.document
-
-        // คลุม Selector ทุกแบบของ DooPlay
-        val elements = document.select("div.items article, #archive-content article, .content .items .item, article.item")
+        val elements = document.select("article.item, div.items article, .content .items .item")
         val homeItems = elements.mapNotNull { it.toSearchResult() }
 
         return newHomePageResponse(request.name, homeItems)
@@ -61,23 +63,31 @@ class AnimeWakuProvider : MainAPI() {
         }
     }
 
+    // แก้ไขระบบ Search ให้ใช้ DooPlay Live Search REST API โดยตรง
     override suspend fun search(query: String): List<SearchResponse> {
-        val encodedQuery = URLEncoder.encode(query, "UTF-8")
-        val document = app.get(
-            url = "$mainUrl/?s=$encodedQuery",
-            headers = mapOf("User-Agent" to userAgent)
-        ).document
+        return try {
+            // วิธีที่ 1: ยิงผ่าน Search API ประจำธีม DooPlay
+            val encodedQuery = URLEncoder.encode(query, "UTF-8")
+            val apiUrl = "$mainUrl/wp-json/dooplay/search/?keyword=$encodedQuery&nonce=1173638aff"
+            val apiRes = app.get(apiUrl, headers = defaultHeaders)
 
-        return document.select("div.items article, #archive-content article, .result-item, .content .items .item, article.item").mapNotNull {
-            it.toSearchResult()
+            if (apiRes.code == 200 && apiRes.text.contains("title")) {
+                val doc = Jsoup.parse(apiRes.text)
+                doc.select("li, div.result-item, a").mapNotNull { it.toSearchResult() }
+            } else {
+                // วิธีที่ 2: ถ้า API ไม่ตอบกลับ ให้ Fallback ใช้หน้าเว็บค้นหาปกติ
+                val doc = app.get("$mainUrl/?s=$encodedQuery", headers = defaultHeaders).document
+                doc.select("div.items article, #archive-content article, .result-item, article.item").mapNotNull {
+                    it.toSearchResult()
+                }
+            }
+        } catch (e: Exception) {
+            emptyList()
         }
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val document = app.get(
-            url = url,
-            headers = mapOf("User-Agent" to userAgent)
-        ).document
+        val document = app.get(url, headers = defaultHeaders).document
 
         val title = document.selectFirst(".sheader .data h1")?.text()
             ?: document.selectFirst("h1")?.text()
@@ -133,10 +143,7 @@ class AnimeWakuProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val document = app.get(
-            url = data,
-            headers = mapOf("User-Agent" to userAgent)
-        ).document
+        val document = app.get(data, headers = defaultHeaders).document
         val playerOptions = document.select("ul#playeroptionsul li.dooplay_player_option")
 
         for (option in playerOptions) {
@@ -154,10 +161,9 @@ class AnimeWakuProvider : MainAPI() {
                     "nume" to nume,
                     "type" to type
                 ),
-                headers = mapOf(
+                headers = defaultHeaders + mapOf(
                     "X-Requested-With" to "XMLHttpRequest",
-                    "Referer" to data,
-                    "User-Agent" to userAgent
+                    "Referer" to data
                 )
             ).text
 
@@ -166,9 +172,7 @@ class AnimeWakuProvider : MainAPI() {
             val wrapperDoc = app.get(
                 url = wrapperUrl,
                 referer = data,
-                headers = mapOf(
-                    "User-Agent" to userAgent
-                )
+                headers = defaultHeaders
             ).document
 
             val embedUrl = fixUrlNull(wrapperDoc.selectFirst("iframe#embedvideo")?.attr("src")) ?: continue
