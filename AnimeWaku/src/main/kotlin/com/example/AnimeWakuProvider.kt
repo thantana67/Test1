@@ -431,7 +431,7 @@ class AnimeWakuProvider : MainAPI() {
         return try {
             val document = app.get(url = data, headers = defaultHeaders).document
 
-            // 1. ดึงปุ่ม Player Options ทั้งหมด
+            // 1. ดึงปุ่มตัวเลือกผู้ให้บริการวิดีโอ (Player Options)
             val playerOptions = document.select("ul#playeroptionsul li, li.dooplay_player_option")
 
             for (option in playerOptions) {
@@ -441,7 +441,7 @@ class AnimeWakuProvider : MainAPI() {
 
                 if (postId.isEmpty() || nume.isEmpty()) continue
 
-                // 2. ขอ iframe ผ่าน admin-ajax
+                // 2. เรียก AJAX รับ Wrapper Iframe
                 val ajaxHtml = try {
                     app.post(
                         url = "$mainUrl/wp-admin/admin-ajax.php",
@@ -464,27 +464,20 @@ class AnimeWakuProvider : MainAPI() {
                 val rawWrapperUrl = wrapperDoc.selectFirst("iframe")?.attr("src") ?: continue
                 val wrapperUrl = fixUrlNull(rawWrapperUrl) ?: continue
 
-                // 3. เปิดหน้า DooDee Player
-                val playerResponse = try {
-                    app.get(
-                        url = wrapperUrl,
-                        referer = data,
-                        headers = defaultHeaders
-                    )
+                // 3. เข้าไปยังหน้า Wrapper/DooDee Player
+                val playerDoc = try {
+                    app.get(wrapperUrl, referer = data, headers = defaultHeaders)
                 } catch (_: Exception) {
                     continue
                 }
 
-                val playerHtml = playerResponse.text
-                val playerDoc = playerResponse.document
+                val playerHtml = playerDoc.text
+                val innerIframe = playerDoc.document.selectFirst("iframe#embedvideo, iframe")?.attr("src")
+                val finalUrl = fixUrlNull(innerIframe) ?: wrapperUrl
 
-                // 3.1 ตรวจดูว่ามี iframe ซ้อนอีกชั้นไหม (เช่น iframe#embedvideo)
-                val innerIframe = playerDoc.selectFirst("iframe#embedvideo, iframe")?.attr("src")
-                val finalPlayerUrl = fixUrlNull(innerIframe) ?: wrapperUrl
-
-                val finalHtml = if (finalPlayerUrl != wrapperUrl) {
+                val finalHtml = if (finalUrl != wrapperUrl) {
                     try {
-                        app.get(finalPlayerUrl, referer = wrapperUrl, headers = defaultHeaders).text
+                        app.get(finalUrl, referer = wrapperUrl, headers = defaultHeaders).text
                     } catch (_: Exception) {
                         playerHtml
                     }
@@ -492,44 +485,45 @@ class AnimeWakuProvider : MainAPI() {
                     playerHtml
                 }
 
-                // 4. สกัดหาลิงก์ .m3u8 หรือ .mp4 จาก Source/JavaScript
-                // เคสที่ 1: หาไฟล์ HLS (.m3u8) ในสคริปต์
-                val m3u8Regex = Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']""")
-                m3u8Regex.findAll(finalHtml).forEach { match ->
-                    val streamUrl = match.groupValues[1]
-                    callback.invoke(
-                        newExtractorLink(
-                            source = name,
-                            name = "$name DooDee HLS",
-                            url = streamUrl,
-                            type = ExtractorLinkType.M3U8
-                        ) {
-                            this.referer = finalPlayerUrl
-                            this.quality = Qualities.P1080.value
+                // 4. สกัดหา Playlist ที่ลงท้ายด้วย .txt หรือ .m3u8 (เคส DooDee Player พรางไฟล์)
+                val playlistRegex = Regex("""["'](https?://[^"']+\.(?:txt|m3u8)[^"']*)["']""", RegexOption.IGNORE_CASE)
+
+                playlistRegex.findAll(finalHtml).forEach { match ->
+                    val rawUrl = match.groupValues[1].replace("\\/", "/")
+
+                    // กรองเฉพาะ URL ที่มีคำบ่งบอกความละเอียด หรือชื่อไฟล์สตรีม
+                    if (rawUrl.contains(".txt") || rawUrl.contains(".m3u8")) {
+                        val quality = when {
+                            rawUrl.contains("1080") -> Qualities.P1080.value
+                            rawUrl.contains("720") -> Qualities.P720.value
+                            rawUrl.contains("480") -> Qualities.P480.value
+                            else -> Qualities.Unknown.value
                         }
-                    )
+
+                        val qualityName = when (quality) {
+                            Qualities.P1080.value -> "1080p"
+                            Qualities.P720.value -> "720p"
+                            Qualities.P480.value -> "480p"
+                            else -> "Auto"
+                        }
+
+                        callback.invoke(
+                            newExtractorLink(
+                                source = name,
+                                name = "$name DooDee ($qualityName)",
+                                url = rawUrl,
+                                type = ExtractorLinkType.M3U8
+                            ) {
+                                this.referer = finalUrl
+                                this.quality = quality
+                            }
+                        )
+                    }
                 }
 
-                // เคสที่ 2: หาไฟล์ตรง .mp4
-                val mp4Regex = Regex("""["'](https?://[^"']+\.mp4[^"']*)["']""")
-                mp4Regex.findAll(finalHtml).forEach { match ->
-                    val streamUrl = match.groupValues[1]
-                    callback.invoke(
-                        newExtractorLink(
-                            source = name,
-                            name = "$name DooDee MP4",
-                            url = streamUrl,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = finalPlayerUrl
-                            this.quality = Qualities.P1080.value
-                        }
-                    )
-                }
-
-                // เคสที่ 3: เผื่อเป็น Extractor มาตรฐานที่ Cloudstream รู้จัก
+                // 5. รองรับ Extractor ทั่วไปเผื่อมีเซิร์ฟเวอร์สำรองตัวอื่น
                 try {
-                    loadExtractor(finalPlayerUrl, wrapperUrl, subtitleCallback, callback)
+                    loadExtractor(finalUrl, wrapperUrl, subtitleCallback, callback)
                 } catch (_: Exception) { }
             }
 
