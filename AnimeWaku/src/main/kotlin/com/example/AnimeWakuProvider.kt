@@ -10,17 +10,12 @@ class AnimeWakuProvider : MainAPI() {
     override var mainUrl = "https://anime-waku.com"
     override var name = "AnimeWaku"
     override val supportedTypes = setOf(TvType.Anime)
-    override var lang = "en"
+    override var lang = "th"
     override val hasMainPage = true
 
-    /*
-     * IMPORTANT:
-     * อย่าใส่ single quote ครอบ User-Agent
-     * และอย่าใส่ตัวอักษรภาษาไทยหรืออักขระแปลก ๆ ต่อท้าย
-     */
     private val userAgent =
-        "Mozilla/5.0 (Linux; Android 13; K) AppleWebKit/537.36 " +
-                "(KHTML, like Gecko) Chrome/152.0.0.0 Mobile Safari/537.36"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
     private val defaultHeaders = mapOf(
         "User-Agent" to userAgent,
@@ -80,11 +75,6 @@ class AnimeWakuProvider : MainAPI() {
 
         return try {
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
-
-            /*
-             * ไม่ใช้ DooPlay REST API แล้ว
-             * เพราะเว็บปัจจุบันไม่ได้พึ่ง endpoint เดิมของ provider
-             */
             val url = "$mainUrl/?s=$encodedQuery"
 
             val document = app.get(
@@ -110,31 +100,15 @@ class AnimeWakuProvider : MainAPI() {
         val results = mutableListOf<SearchResponse>()
         val seen = hashSetOf<String>()
 
-        /*
-         * Anime-Waku ใช้ URL:
-         * /anime/ชื่อเรื่อง/
-         *
-         * จึงไม่จำเป็นต้องพึ่ง selector ของ DooPlay
-         */
         document.select("a[href*='/anime/']").forEach { element ->
 
             val href = fixUrlNull(element.attr("href")) ?: return@forEach
 
             if (!href.contains("/anime/")) return@forEach
-
-            /*
-             * ป้องกัน duplicate
-             */
             if (!seen.add(href)) return@forEach
 
-            /*
-             * ข้อความจาก link
-             */
             var title = element.text().trim()
 
-            /*
-             * ถ้า link ไม่มีข้อความ ลองใช้ alt ของ image
-             */
             if (title.isBlank()) {
                 title = element
                     .selectFirst("img")
@@ -145,16 +119,9 @@ class AnimeWakuProvider : MainAPI() {
 
             if (title.isBlank()) return@forEach
 
-            /*
-             * ล้างข้อความ status ที่เว็บแสดงต่อท้าย
-             */
             title = cleanAnimeTitle(title)
 
-            /*
-             * หา poster
-             */
             val image = element.selectFirst("img")
-
             val rawPoster =
                 image?.attr("data-lazy-src")?.takeIf { it.isNotBlank() }
                     ?: image?.attr("data-src")?.takeIf { it.isNotBlank() }
@@ -208,18 +175,12 @@ class AnimeWakuProvider : MainAPI() {
             headers = defaultHeaders
         ).document
 
-        /*
-         * Title
-         */
         val title = (
                 document.selectFirst("h1")?.text()
                     ?: document.title()
                     ?: "Unknown"
                 ).trim()
 
-        /*
-         * Poster
-         */
         val posterElement = document.selectFirst(
             "img[alt*='${escapeCss(title)}'], " +
                     ".poster img, " +
@@ -235,40 +196,19 @@ class AnimeWakuProvider : MainAPI() {
                 ?: posterElement?.attr("src")?.takeIf { it.isNotBlank() }
 
         val poster = fixUrlNull(rawPoster)
-
-        /*
-         * Description
-         *
-         * หน้าเว็บปัจจุบันมี section "เรื่องย่อ"
-         */
         val description = findDescription(document)
 
         val subEpisodes = mutableListOf<Episode>()
         val dubEpisodes = mutableListOf<Episode>()
 
-        /*
-         * --------------------------------------------------------
-         * Episode parsing
-         * --------------------------------------------------------
-         *
-         * Anime-Waku ใช้:
-         * /ep/XXXXX/
-         *
-         * ตัวอย่างจริง:
-         * /ep/110539/
-         * /ep/110541/
-         */
         val episodeLinks = document.select("a[href*='/ep/']")
-
         val seenEpisodes = hashSetOf<String>()
 
         episodeLinks.forEach { element ->
 
-            val href = fixUrlNull(element.attr("href"))
-                ?: return@forEach
+            val href = fixUrlNull(element.attr("href")) ?: return@forEach
 
             if (!href.contains("/ep/")) return@forEach
-
             if (!seenEpisodes.add(href)) return@forEach
 
             var episodeName = element.text().trim()
@@ -283,9 +223,6 @@ class AnimeWakuProvider : MainAPI() {
 
             if (episodeName.isBlank()) return@forEach
 
-            /*
-             * หาเลขตอนจากข้อความ
-             */
             val episodeNumber = Regex(
                 "ตอนที่\\s*(\\d+)"
             )
@@ -302,11 +239,7 @@ class AnimeWakuProvider : MainAPI() {
                     ?.toIntOrNull()
                 ?: (subEpisodes.size + dubEpisodes.size + 1)
 
-            /*
-             * Poster ของ episode
-             */
             val epImage = element.selectFirst("img")
-
             val rawEpPoster =
                 epImage?.attr("data-lazy-src")?.takeIf { it.isNotBlank() }
                     ?: epImage?.attr("data-src")?.takeIf { it.isNotBlank() }
@@ -321,24 +254,13 @@ class AnimeWakuProvider : MainAPI() {
                 posterUrl = epPoster
             }
 
-            /*
-             * แยกพากย์ / ซับ จากชื่อ episode
-             */
-            if (
-                episodeName.contains(
-                    "พากย์ไทย",
-                    ignoreCase = true
-                )
-            ) {
+            if (episodeName.contains("พากย์ไทย", ignoreCase = true)) {
                 dubEpisodes.add(episode)
             } else {
                 subEpisodes.add(episode)
             }
         }
 
-        /*
-         * เรียงเลขตอน
-         */
         subEpisodes.sortBy { it.episode }
         dubEpisodes.sortBy { it.episode }
 
@@ -347,7 +269,6 @@ class AnimeWakuProvider : MainAPI() {
             url,
             TvType.Anime
         ) {
-
             posterUrl = poster
             plot = description
 
@@ -367,59 +288,34 @@ class AnimeWakuProvider : MainAPI() {
         }
     }
 
-    // ------------------------------------------------------------
-    // DESCRIPTION
-    // ------------------------------------------------------------
-
     private fun findDescription(
         document: org.jsoup.nodes.Document
     ): String? {
 
-        /*
-         * วิธีที่ 1:
-         * หา element ที่อยู่ใต้ heading "เรื่องย่อ"
-         */
         val synopsisHeading = document
             .select("h2, h3, h4")
             .firstOrNull {
-                it.text().contains(
-                    "เรื่องย่อ",
-                    ignoreCase = true
-                )
+                it.text().contains("เรื่องย่อ", ignoreCase = true)
             }
 
         if (synopsisHeading != null) {
-
             val next = synopsisHeading.nextElementSibling()
-
             if (next != null) {
                 val text = next.text().trim()
-
-                if (text.isNotBlank()) {
-                    return text
-                }
+                if (text.isNotBlank()) return text
             }
         }
 
-        /*
-         * วิธีที่ 2:
-         * fallback หา paragraph ที่ยาว
-         */
         return document
             .select("p")
             .map { it.text().trim() }
             .firstOrNull {
-                it.length > 50 &&
-                        !it.contains("Login to your account")
+                it.length > 50 && !it.contains("Login to your account")
             }
     }
 
     // ------------------------------------------------------------
-    // LOAD LINKS
-    // ------------------------------------------------------------
-
-    // ------------------------------------------------------------
-    // LOAD LINKS (2-Layer DooPlay Player + DooDee)
+    // LOAD LINKS (เน้นตัวเล่นที่ 2 และเจาะ HLS DooDee)
     // ------------------------------------------------------------
 
     override suspend fun loadLinks(
@@ -431,19 +327,24 @@ class AnimeWakuProvider : MainAPI() {
         return try {
             val document = app.get(url = data, headers = defaultHeaders).document
 
-            // 1. ดึงปุ่มเปลี่ยน Player ของ DooPlay
-            val playerOptions = document.select("ul#playeroptionsul li, li.dooplay_player_option")
+            // คัดกรองตัวเลือก: โฟกัสตัวเล่นที่ 2 ก่อน (หลบตัวเล่น 1 ที่มี Anti-DevTools)
+            val allOptions = document.select("ul#playeroptionsul li, li.dooplay_player_option")
+            val targetOptions = allOptions.filter {
+                it.text().contains("ตัวเล่นที่ 2") ||
+                        it.text().contains("ตัวเล่น 2") ||
+                        it.attr("data-nume") == "2"
+            }.ifEmpty { allOptions } // ถ้าหาตัวเล่น 2 ไม่เจอ ให้ fallback เป็นทั้งหมด
 
-            for (option in playerOptions) {
-                val postId = option.attr("data-post").trim()
-                val nume = option.attr("data-nume").trim()
-                val type = option.attr("data-type").trim()
+            for (option in targetOptions) {
+                try {
+                    val postId = option.attr("data-post").trim()
+                    val nume = option.attr("data-nume").trim()
+                    val type = option.attr("data-type").trim()
 
-                if (postId.isEmpty() || nume.isEmpty()) continue
+                    if (postId.isEmpty() || nume.isEmpty()) continue
 
-                // 2. เรียก AJAX รับ wrapper iframe
-                val ajaxHtml = try {
-                    app.post(
+                    // 1. เรียก AJAX ของ DooPlay
+                    val ajaxHtml = app.post(
                         url = "$mainUrl/wp-admin/admin-ajax.php",
                         data = mapOf(
                             "action" to "doo_player_ajax",
@@ -456,96 +357,98 @@ class AnimeWakuProvider : MainAPI() {
                             "Referer" to data
                         )
                     ).text
-                } catch (_: Exception) {
-                    continue
-                }
 
-                val wrapperDoc = org.jsoup.Jsoup.parse(ajaxHtml)
-                val rawWrapperUrl = wrapperDoc.selectFirst("iframe")?.attr("src") ?: continue
-                val wrapperUrl = fixUrlNull(rawWrapperUrl) ?: continue
+                    val wrapperDoc = org.jsoup.Jsoup.parse(ajaxHtml)
+                    val rawWrapperUrl = wrapperDoc.selectFirst("iframe")?.attr("src") ?: continue
+                    val wrapperUrl = fixUrlNull(rawWrapperUrl) ?: continue
 
-                // 3. เข้าหน้า DooDee Player
-                val playerDoc = try {
-                    app.get(wrapperUrl, referer = data, headers = defaultHeaders)
-                } catch (_: Exception) {
-                    continue
-                }
+                    // 2. ดึงหน้า Player Wrapper
+                    val playerDoc = app.get(wrapperUrl, referer = data, headers = defaultHeaders)
+                    val playerHtml = playerDoc.text
+                    val innerIframe = playerDoc.document.selectFirst("iframe#embedvideo, iframe")?.attr("src")
+                    val finalUrl = fixUrlNull(innerIframe) ?: wrapperUrl
 
-                val playerHtml = playerDoc.text
-                val innerIframe = playerDoc.document.selectFirst("iframe#embedvideo, iframe")?.attr("src")
-                val finalUrl = fixUrlNull(innerIframe) ?: wrapperUrl
-
-                val finalHtml = if (finalUrl != wrapperUrl) {
-                    try {
-                        app.get(finalUrl, referer = wrapperUrl, headers = defaultHeaders).text
-                    } catch (_: Exception) {
+                    val finalHtml = if (finalUrl != wrapperUrl) {
+                        try {
+                            app.get(finalUrl, referer = wrapperUrl, headers = defaultHeaders).text
+                        } catch (_: Exception) {
+                            playerHtml
+                        }
+                    } else {
                         playerHtml
                     }
-                } else {
-                    playerHtml
-                }
 
-                // 4. สกัดหา Base URL หรือลิงก์ m3u8 .txt ตรงๆ จาก HTML/JavaScript
-                val txtRegex = Regex("""https?://[^"'<>\s]+\/m3u8\/[a-fA-F0-9]{32}-[0-9]+\.txt""")
-                val foundDirect = txtRegex.findAll(finalHtml).toList()
+                    // 3. สกัดหา Direct URL ของ .txt หรือ .m3u8 ที่มีอยู่
+                    val txtRegex = Regex("""https?://[^"'<>\s]+\/m3u8\/[a-fA-F0-9]{32}-[0-9]+\.txt""")
+                    val foundDirect = txtRegex.findAll(finalHtml).toList()
 
-                if (foundDirect.isNotEmpty()) {
-                    foundDirect.forEach { match ->
-                        val streamUrl = match.value
-                        val quality = when {
-                            streamUrl.contains("1080") -> Qualities.P1080.value
-                            streamUrl.contains("720") -> Qualities.P720.value
-                            streamUrl.contains("480") -> Qualities.P480.value
-                            else -> Qualities.Unknown.value
-                        }
-
-                        callback.invoke(
-                            newExtractorLink(
-                                source = name,
-                                name = "$name DooDee",
-                                url = streamUrl,
-                                type = ExtractorLinkType.M3U8
-                            ) {
-                                this.referer = finalUrl
-                                this.quality = quality
+                    if (foundDirect.isNotEmpty()) {
+                        foundDirect.forEach { match ->
+                            val streamUrl = match.value
+                            val quality = when {
+                                streamUrl.contains("1080") -> Qualities.P1080.value
+                                streamUrl.contains("720") -> Qualities.P720.value
+                                streamUrl.contains("480") -> Qualities.P480.value
+                                else -> Qualities.Unknown.value
                             }
-                        )
-                    }
-                } else {
-                    // กรณีเว็บซ่อนเฉพาะรหัส Hash 32 หลักไว้ในตัวแปร JS
-                    val hashRegex = Regex("""[a-fA-F0-9]{32}""")
-                    // ดึงโดเมนหลักของ host DooDee player เช่น https://player-ok-goal.doodee-player.com
-                    val hostDomain = Regex("""https?://[a-zA-Z0-9.-]*doodee-player\.com""").find(finalUrl)?.value
-                        ?: "https://player-ok-goal.doodee-player.com"
 
-                    // สแกนหา Hash ในสคริปต์ของหน้า player
-                    val matchedHash = hashRegex.find(finalHtml)?.value
-                    if (matchedHash != null) {
-                        listOf("720", "1080", "480").forEach { q ->
-                            val generatedUrl = "$hostDomain/m3u8/$matchedHash-$q.txt"
+                            val qName = when (quality) {
+                                Qualities.P1080.value -> "1080p"
+                                Qualities.P720.value -> "720p"
+                                Qualities.P480.value -> "480p"
+                                else -> "Auto"
+                            }
+
                             callback.invoke(
                                 newExtractorLink(
                                     source = name,
-                                    name = "$name DooDee $q" + "p",
-                                    url = generatedUrl,
+                                    name = "$name DooDee ($qName)",
+                                    url = streamUrl,
                                     type = ExtractorLinkType.M3U8
                                 ) {
                                     this.referer = finalUrl
-                                    this.quality = when(q) {
-                                        "1080" -> Qualities.P1080.value
-                                        "720" -> Qualities.P720.value
-                                        else -> Qualities.P480.value
-                                    }
+                                    this.quality = quality
                                 }
                             )
                         }
-                    }
-                }
+                    } else {
+                        // 4. สแกนหา Hash 32 ตัวอักษรเพื่อประกอบ URL สตรีม
+                        val hashRegex = Regex("""[a-fA-F0-9]{32}""")
+                        val hostDomain = Regex("""https?://[a-zA-Z0-9.-]*doodee-player\.com""").find(finalUrl)?.value
+                            ?: "https://player-ok-goal.doodee-player.com"
 
-                // สำรอง Extractor ทั่วไป
-                try {
-                    loadExtractor(finalUrl, wrapperUrl, subtitleCallback, callback)
-                } catch (_: Exception) { }
+                        val matchedHash = hashRegex.find(finalHtml)?.value
+                        if (matchedHash != null) {
+                            listOf("720", "1080", "480").forEach { q ->
+                                val generatedUrl = "$hostDomain/m3u8/$matchedHash-$q.txt"
+                                callback.invoke(
+                                    newExtractorLink(
+                                        source = name,
+                                        name = "$name DooDee $q" + "p",
+                                        url = generatedUrl,
+                                        type = ExtractorLinkType.M3U8
+                                    ) {
+                                        this.referer = finalUrl
+                                        this.quality = when (q) {
+                                            "1080" -> Qualities.P1080.value
+                                            "720" -> Qualities.P720.value
+                                            else -> Qualities.P480.value
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // สำรองตัวเล่นกรณีเป็น Extractor มาตรฐาน
+                    try {
+                        loadExtractor(finalUrl, wrapperUrl, subtitleCallback, callback)
+                    } catch (_: Exception) { }
+
+                } catch (_: Exception) {
+                    // ลูปตัวนี้มีปัญหา ให้ข้ามไปรอบถัดไปทันที
+                    continue
+                }
             }
 
             true
