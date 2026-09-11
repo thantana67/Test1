@@ -315,7 +315,7 @@ class AnimeWakuProvider : MainAPI() {
     }
 
     // ------------------------------------------------------------
-    // LOAD LINKS (เน้นตัวเล่นที่ 2 และเจาะ HLS DooDee)
+    // LOAD LINKS (Step-by-Step Diagnostic Mode)
     // ------------------------------------------------------------
 
     override suspend fun loadLinks(
@@ -324,137 +324,88 @@ class AnimeWakuProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return try {
-            val document = app.get(url = data, headers = defaultHeaders).document
-
-            // คัดกรองตัวเลือก: โฟกัสตัวเล่นที่ 2 ก่อน (หลบตัวเล่น 1 ที่มี Anti-DevTools)
-            val allOptions = document.select("ul#playeroptionsul li, li.dooplay_player_option")
-            val targetOptions = allOptions.filter {
-                it.text().contains("ตัวเล่นที่ 2") ||
-                        it.text().contains("ตัวเล่น 2") ||
-                        it.attr("data-nume") == "2"
-            }.ifEmpty { allOptions } // ถ้าหาตัวเล่น 2 ไม่เจอ ให้ fallback เป็นทั้งหมด
-
-            for (option in targetOptions) {
-                try {
-                    val postId = option.attr("data-post").trim()
-                    val nume = option.attr("data-nume").trim()
-                    val type = option.attr("data-type").trim()
-
-                    if (postId.isEmpty() || nume.isEmpty()) continue
-
-                    // 1. เรียก AJAX ของ DooPlay
-                    val ajaxHtml = app.post(
-                        url = "$mainUrl/wp-admin/admin-ajax.php",
-                        data = mapOf(
-                            "action" to "doo_player_ajax",
-                            "post" to postId,
-                            "nume" to nume,
-                            "type" to type
-                        ),
-                        headers = defaultHeaders + mapOf(
-                            "X-Requested-With" to "XMLHttpRequest",
-                            "Referer" to data
-                        )
-                    ).text
-
-                    val wrapperDoc = org.jsoup.Jsoup.parse(ajaxHtml)
-                    val rawWrapperUrl = wrapperDoc.selectFirst("iframe")?.attr("src") ?: continue
-                    val wrapperUrl = fixUrlNull(rawWrapperUrl) ?: continue
-
-                    // 2. ดึงหน้า Player Wrapper
-                    val playerDoc = app.get(wrapperUrl, referer = data, headers = defaultHeaders)
-                    val playerHtml = playerDoc.text
-                    val innerIframe = playerDoc.document.selectFirst("iframe#embedvideo, iframe")?.attr("src")
-                    val finalUrl = fixUrlNull(innerIframe) ?: wrapperUrl
-
-                    val finalHtml = if (finalUrl != wrapperUrl) {
-                        try {
-                            app.get(finalUrl, referer = wrapperUrl, headers = defaultHeaders).text
-                        } catch (_: Exception) {
-                            playerHtml
-                        }
-                    } else {
-                        playerHtml
-                    }
-
-                    // 3. สกัดหา Direct URL ของ .txt หรือ .m3u8 ที่มีอยู่
-                    val txtRegex = Regex("""https?://[^"'<>\s]+\/m3u8\/[a-fA-F0-9]{32}-[0-9]+\.txt""")
-                    val foundDirect = txtRegex.findAll(finalHtml).toList()
-
-                    if (foundDirect.isNotEmpty()) {
-                        foundDirect.forEach { match ->
-                            val streamUrl = match.value
-                            val quality = when {
-                                streamUrl.contains("1080") -> Qualities.P1080.value
-                                streamUrl.contains("720") -> Qualities.P720.value
-                                streamUrl.contains("480") -> Qualities.P480.value
-                                else -> Qualities.Unknown.value
-                            }
-
-                            val qName = when (quality) {
-                                Qualities.P1080.value -> "1080p"
-                                Qualities.P720.value -> "720p"
-                                Qualities.P480.value -> "480p"
-                                else -> "Auto"
-                            }
-
-                            callback.invoke(
-                                newExtractorLink(
-                                    source = name,
-                                    name = "$name DooDee ($qName)",
-                                    url = streamUrl,
-                                    type = ExtractorLinkType.M3U8
-                                ) {
-                                    this.referer = finalUrl
-                                    this.quality = quality
-                                }
-                            )
-                        }
-                    } else {
-                        // 4. สแกนหา Hash 32 ตัวอักษรเพื่อประกอบ URL สตรีม
-                        val hashRegex = Regex("""[a-fA-F0-9]{32}""")
-                        val hostDomain = Regex("""https?://[a-zA-Z0-9.-]*doodee-player\.com""").find(finalUrl)?.value
-                            ?: "https://player-ok-goal.doodee-player.com"
-
-                        val matchedHash = hashRegex.find(finalHtml)?.value
-                        if (matchedHash != null) {
-                            listOf("720", "1080", "480").forEach { q ->
-                                val generatedUrl = "$hostDomain/m3u8/$matchedHash-$q.txt"
-                                callback.invoke(
-                                    newExtractorLink(
-                                        source = name,
-                                        name = "$name DooDee $q" + "p",
-                                        url = generatedUrl,
-                                        type = ExtractorLinkType.M3U8
-                                    ) {
-                                        this.referer = finalUrl
-                                        this.quality = when (q) {
-                                            "1080" -> Qualities.P1080.value
-                                            "720" -> Qualities.P720.value
-                                            else -> Qualities.P480.value
-                                        }
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    // สำรองตัวเล่นกรณีเป็น Extractor มาตรฐาน
-                    try {
-                        loadExtractor(finalUrl, wrapperUrl, subtitleCallback, callback)
-                    } catch (_: Exception) { }
-
-                } catch (_: Exception) {
-                    // ลูปตัวนี้มีปัญหา ให้ข้ามไปรอบถัดไปทันที
-                    continue
-                }
-            }
-
-            true
-        } catch (_: Exception) {
-            false
+        // ขั้นตอนที่ 1: ดึงหน้า Episode
+        val document = try {
+            app.get(url = data, headers = defaultHeaders).document
+        } catch (e: Exception) {
+            throw ErrorLoadingException("สเต็ป 1 ล้มเหลว: ไม่สามารถโหลดหน้าตอนได้ (${e.message})")
         }
+
+        // ขั้นตอนที่ 2: ค้นหาแท็บปุ่ม Player
+        val allOptions = document.select("ul#playeroptionsul li, li.dooplay_player_option")
+        if (allOptions.isEmpty()) {
+            throw ErrorLoadingException("สเต็ป 2 ล้มเหลว: หาปุ่มตัวเลือก Player ไม่พบเลยใน DOM")
+        }
+
+        val targetOption = allOptions.find {
+            it.text().contains("2") || it.attr("data-nume") == "2"
+        } ?: allOptions.first()!!
+
+        val postId = targetOption.attr("data-post").trim()
+        val nume = targetOption.attr("data-nume").trim()
+        val type = targetOption.attr("data-type").trim()
+
+        if (postId.isEmpty() || nume.isEmpty()) {
+            throw ErrorLoadingException("สเต็ป 2.1 ล้มเหลว: ค่า Attribute ไม่ครบ (post='$postId', nume='$nume')")
+        }
+
+        // ขั้นตอนที่ 3: ส่ง AJAX ขอ Iframe
+        val ajaxRes = try {
+            app.post(
+                url = "$mainUrl/wp-admin/admin-ajax.php",
+                data = mapOf(
+                    "action" to "doo_player_ajax",
+                    "post" to postId,
+                    "nume" to nume,
+                    "type" to type
+                ),
+                headers = defaultHeaders + mapOf(
+                    "X-Requested-With" to "XMLHttpRequest",
+                    "Referer" to data
+                )
+            )
+        } catch (e: Exception) {
+            throw ErrorLoadingException("สเต็ป 3 ล้มเหลว: ส่งคำขอ AJAX ไม่สำเร็จ (${e.message})")
+        }
+
+        val rawIframe = org.jsoup.Jsoup.parse(ajaxRes.text).selectFirst("iframe")?.attr("src")
+            ?: throw ErrorLoadingException("สเต็ป 3.1 ล้มเหลว: AJAX ไม่ส่งแท็ก iframe กลับมา (ตอบกลับ: '${ajaxRes.text.take(80)}')")
+
+        val wrapperUrl = fixUrlNull(rawIframe)
+            ?: throw ErrorLoadingException("สเต็ป 3.2 ล้มเหลว: แปลง URL ของ Iframe ไม่สำเร็จ ($rawIframe)")
+
+        // ขั้นตอนที่ 4: โหลดหน้า Wrapper ของ DooDee
+        val playerDoc = try {
+            app.get(wrapperUrl, referer = data, headers = defaultHeaders)
+        } catch (e: Exception) {
+            throw ErrorLoadingException("สเต็ป 4 ล้มเหลว: ดึงหน้า DooDee Wrapper ไม่สำเร็จ (${e.message})")
+        }
+
+        val playerHtml = playerDoc.text
+        val innerIframe = playerDoc.document.selectFirst("iframe#embedvideo, iframe")?.attr("src")
+        val finalUrl = fixUrlNull(innerIframe) ?: wrapperUrl
+
+        val finalHtml = if (finalUrl != wrapperUrl) {
+            try {
+                app.get(finalUrl, referer = wrapperUrl, headers = defaultHeaders).text
+            } catch (e: Exception) {
+                playerHtml
+            }
+        } else {
+            playerHtml
+        }
+
+        // ขั้นตอนที่ 5: พ่นผลลัพธ์เพื่อวินิจฉัยจุดที่ Hash ซ่อนอยู่
+        val txtFound = Regex("""https?://[^"'<>\s]+\/m3u8\/[a-fA-F0-9]{32}-[0-9]+\.txt""").find(finalHtml)?.value
+        val hashFound = Regex("""[a-fA-F0-9]{32}""").find(finalHtml)?.value
+
+        throw ErrorLoadingException(
+            "วินิจฉัยหน้าสำเร็จ!\n" +
+                    "• Final URL: $finalUrl\n" +
+                    "• Direct .txt: ${txtFound ?: "ไม่พบ"}\n" +
+                    "• Hash 32: ${hashFound ?: "ไม่พบ"}\n" +
+                    "• HTML Size: ${finalHtml.length} ตัวอักษร"
+        )
     }
 
     // ------------------------------------------------------------
