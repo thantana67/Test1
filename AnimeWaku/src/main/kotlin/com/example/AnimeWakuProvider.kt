@@ -431,7 +431,7 @@ class AnimeWakuProvider : MainAPI() {
         return try {
             val document = app.get(url = data, headers = defaultHeaders).document
 
-            // 1. ดึงปุ่มตัวเลือกผู้ให้บริการวิดีโอ (Player Options)
+            // 1. ดึงปุ่มเปลี่ยน Player ของ DooPlay
             val playerOptions = document.select("ul#playeroptionsul li, li.dooplay_player_option")
 
             for (option in playerOptions) {
@@ -441,7 +441,7 @@ class AnimeWakuProvider : MainAPI() {
 
                 if (postId.isEmpty() || nume.isEmpty()) continue
 
-                // 2. เรียก AJAX รับ Wrapper Iframe
+                // 2. เรียก AJAX รับ wrapper iframe
                 val ajaxHtml = try {
                     app.post(
                         url = "$mainUrl/wp-admin/admin-ajax.php",
@@ -464,7 +464,7 @@ class AnimeWakuProvider : MainAPI() {
                 val rawWrapperUrl = wrapperDoc.selectFirst("iframe")?.attr("src") ?: continue
                 val wrapperUrl = fixUrlNull(rawWrapperUrl) ?: continue
 
-                // 3. เข้าไปยังหน้า Wrapper/DooDee Player
+                // 3. เข้าหน้า DooDee Player
                 val playerDoc = try {
                     app.get(wrapperUrl, referer = data, headers = defaultHeaders)
                 } catch (_: Exception) {
@@ -485,33 +485,25 @@ class AnimeWakuProvider : MainAPI() {
                     playerHtml
                 }
 
-                // 4. สกัดหา Playlist ที่ลงท้ายด้วย .txt หรือ .m3u8 (เคส DooDee Player พรางไฟล์)
-                val playlistRegex = Regex("""["'](https?://[^"']+\.(?:txt|m3u8)[^"']*)["']""", RegexOption.IGNORE_CASE)
+                // 4. สกัดหา Base URL หรือลิงก์ m3u8 .txt ตรงๆ จาก HTML/JavaScript
+                val txtRegex = Regex("""https?://[^"'<>\s]+\/m3u8\/[a-fA-F0-9]{32}-[0-9]+\.txt""")
+                val foundDirect = txtRegex.findAll(finalHtml).toList()
 
-                playlistRegex.findAll(finalHtml).forEach { match ->
-                    val rawUrl = match.groupValues[1].replace("\\/", "/")
-
-                    // กรองเฉพาะ URL ที่มีคำบ่งบอกความละเอียด หรือชื่อไฟล์สตรีม
-                    if (rawUrl.contains(".txt") || rawUrl.contains(".m3u8")) {
+                if (foundDirect.isNotEmpty()) {
+                    foundDirect.forEach { match ->
+                        val streamUrl = match.value
                         val quality = when {
-                            rawUrl.contains("1080") -> Qualities.P1080.value
-                            rawUrl.contains("720") -> Qualities.P720.value
-                            rawUrl.contains("480") -> Qualities.P480.value
+                            streamUrl.contains("1080") -> Qualities.P1080.value
+                            streamUrl.contains("720") -> Qualities.P720.value
+                            streamUrl.contains("480") -> Qualities.P480.value
                             else -> Qualities.Unknown.value
-                        }
-
-                        val qualityName = when (quality) {
-                            Qualities.P1080.value -> "1080p"
-                            Qualities.P720.value -> "720p"
-                            Qualities.P480.value -> "480p"
-                            else -> "Auto"
                         }
 
                         callback.invoke(
                             newExtractorLink(
                                 source = name,
-                                name = "$name DooDee ($qualityName)",
-                                url = rawUrl,
+                                name = "$name DooDee",
+                                url = streamUrl,
                                 type = ExtractorLinkType.M3U8
                             ) {
                                 this.referer = finalUrl
@@ -519,9 +511,38 @@ class AnimeWakuProvider : MainAPI() {
                             }
                         )
                     }
+                } else {
+                    // กรณีเว็บซ่อนเฉพาะรหัส Hash 32 หลักไว้ในตัวแปร JS
+                    val hashRegex = Regex("""[a-fA-F0-9]{32}""")
+                    // ดึงโดเมนหลักของ host DooDee player เช่น https://player-ok-goal.doodee-player.com
+                    val hostDomain = Regex("""https?://[a-zA-Z0-9.-]*doodee-player\.com""").find(finalUrl)?.value
+                        ?: "https://player-ok-goal.doodee-player.com"
+
+                    // สแกนหา Hash ในสคริปต์ของหน้า player
+                    val matchedHash = hashRegex.find(finalHtml)?.value
+                    if (matchedHash != null) {
+                        listOf("720", "1080", "480").forEach { q ->
+                            val generatedUrl = "$hostDomain/m3u8/$matchedHash-$q.txt"
+                            callback.invoke(
+                                newExtractorLink(
+                                    source = name,
+                                    name = "$name DooDee $q" + "p",
+                                    url = generatedUrl,
+                                    type = ExtractorLinkType.M3U8
+                                ) {
+                                    this.referer = finalUrl
+                                    this.quality = when(q) {
+                                        "1080" -> Qualities.P1080.value
+                                        "720" -> Qualities.P720.value
+                                        else -> Qualities.P480.value
+                                    }
+                                }
+                            )
+                        }
+                    }
                 }
 
-                // 5. รองรับ Extractor ทั่วไปเผื่อมีเซิร์ฟเวอร์สำรองตัวอื่น
+                // สำรอง Extractor ทั่วไป
                 try {
                     loadExtractor(finalUrl, wrapperUrl, subtitleCallback, callback)
                 } catch (_: Exception) { }
