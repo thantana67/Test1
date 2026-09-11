@@ -19,19 +19,40 @@ class AnimeWakuProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val document = app.get("${request.data}$page").document
-        val homeItems = document.select("div.items article, .content .items .item").mapNotNull {
+        // หน้า 1 ให้ดึง URL หลักตรงๆ ถ้าหน้าถัดไปค่อยต่อ /page/X/
+        val url = if (page <= 1) {
+            request.data.removeSuffix("page/")
+        } else {
+            "${request.data}$page/"
+        }
+
+        val document = app.get(
+            url = url,
+            headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+        ).document
+
+        // ดึงการ์ดอนิเมะของ DooPlay
+        val homeItems = document.select("div.items article.item, .content .items article, div.item.tvshows, div.item.movies").mapNotNull {
             it.toSearchResult()
         }
         return newHomePageResponse(request.name, homeItems)
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val title = this.selectFirst(".data h3 a, h3 a")?.text() ?: return null
-        val href = fixUrlNull(this.selectFirst(".data h3 a, h3 a, .poster a")?.attr("href")) ?: return null
-        val posterUrl = fixUrlNull(this.selectFirst("img")?.let {
-            it.attr("data-lazy-src").ifEmpty { it.attr("src") }
-        })
+        // ดึงชื่อเรื่อง
+        val title = this.selectFirst(".data h3 a, h3 a, .title a")?.text() ?: return null
+
+        // ดึงลิงก์ไปหน้าอนิเมะ
+        val href = fixUrlNull(this.selectFirst(".data h3 a, .poster a, a")?.attr("href")) ?: return null
+
+        // ดึงรูปโปสเตอร์ (แก้จุด Lazy load ของ DooPlay/WP Rocket)
+        val img = this.selectFirst(".poster img, img")
+        val rawPoster = img?.attr("data-lazy-src")?.ifEmpty { null }
+            ?: img?.attr("data-src")?.ifEmpty { null }
+            ?: img?.attr("src")?.ifEmpty { null }
+        val posterUrl = fixUrlNull(rawPoster)
 
         return newAnimeSearchResponse(title, href, TvType.Anime) {
             this.posterUrl = posterUrl
