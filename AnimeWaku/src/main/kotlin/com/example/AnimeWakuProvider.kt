@@ -325,16 +325,13 @@ class AnimeWakuProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val document = app.get(url = data, headers = defaultHeaders).document
-
-        // ค้นหา Hash จากหน้าเว็บ
-        val finalHtml = document.html()
-        val hashMatch = Regex("""[a-fA-F0-9]{32}""").find(finalHtml)?.value ?: "test_hash_not_found"
-
-        val testUrl = "https://player-ok-goal.doodee-player.com/m3u8/$hashMatch-720.txt"
-
-        // พ่น URL ออกมาดูบนหน้าจอทันทีเพื่อตรวจสอบ
-        throw ErrorLoadingException("Generated URL: $testUrl")
+        try {
+            val document = app.get(url = data, headers = defaultHeaders).document
+            val htmlSize = document.html().length
+            throw ErrorLoadingException("SUCCESS - HTML Size: $htmlSize")
+        } catch (e: Exception) {
+            throw ErrorLoadingException("CATCH ERROR: ${e.message}")
+        }
     }
 
     // ------------------------------------------------------------
