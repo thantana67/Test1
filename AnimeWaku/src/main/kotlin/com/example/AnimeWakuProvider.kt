@@ -169,89 +169,28 @@ class AnimeWakuProvider : MainAPI() {
     override suspend fun load(
         url: String
     ): LoadResponse {
+        val document = app.get(url, headers = defaultHeaders).document
 
-        val document = app.get(
-            url = url,
-            headers = defaultHeaders
-        ).document
-
-        val title = (
-                document.selectFirst("h1")?.text()
-                    ?: document.title()
-                    ?: "Unknown"
-                ).trim()
-
-        val posterElement = document.selectFirst(
-            "img[alt*='${escapeCss(title)}'], " +
-                    ".poster img, " +
-                    ".entry-content img, " +
-                    "article img, " +
-                    "img"
-        )
-
-        val rawPoster =
-            posterElement?.attr("data-lazy-src")?.takeIf { it.isNotBlank() }
-                ?: posterElement?.attr("data-src")?.takeIf { it.isNotBlank() }
-                ?: posterElement?.attr("data-original")?.takeIf { it.isNotBlank() }
-                ?: posterElement?.attr("src")?.takeIf { it.isNotBlank() }
-
-        val poster = fixUrlNull(rawPoster)
+        val title = document.selectFirst("h1")?.text()?.trim() ?: "Unknown"
+        val poster = fixUrlNull(document.selectFirst(".poster img, .entry-content img, img")?.attr("src"))
         val description = findDescription(document)
 
         val subEpisodes = mutableListOf<Episode>()
         val dubEpisodes = mutableListOf<Episode>()
 
-        val episodeLinks = document.select("a[href*='/ep/']")
-        val seenEpisodes = hashSetOf<String>()
-
-        episodeLinks.forEach { element ->
-
+        // ดึงลิงก์ทุกตัวที่มี /ep/ ในหน้าอนิเมะ
+        document.select("a[href*='/ep/']").forEach { element ->
             val href = fixUrlNull(element.attr("href")) ?: return@forEach
+            val episodeName = element.text().trim().ifBlank { "ตอน" }
 
-            if (!href.contains("/ep/")) return@forEach
-            if (!seenEpisodes.add(href)) return@forEach
-
-            var episodeName = element.text().trim()
-
-            if (episodeName.isBlank()) {
-                episodeName = element
-                    .selectFirst("img")
-                    ?.attr("alt")
-                    ?.trim()
-                    ?: ""
-            }
-
-            if (episodeName.isBlank()) return@forEach
-
-            val episodeNumber = Regex(
-                "ตอนที่\\s*(\\d+)"
-            )
-                .find(episodeName)
-                ?.groupValues
-                ?.getOrNull(1)
-                ?.toIntOrNull()
-                ?: Regex(
-                    "(?:-|–)\\s*(\\d+)"
-                )
-                    .find(episodeName)
-                    ?.groupValues
-                    ?.getOrNull(1)
-                    ?.toIntOrNull()
+            // ดึงตัวเลขตอนจากชื่อหรือลิงก์
+            val episodeNumber = Regex("ตอนที่\\s*(\\d+)").find(episodeName)?.groupValues?.get(1)?.toIntOrNull()
+                ?: Regex("/ep/(\\d+)").find(href)?.groupValues?.get(1)?.toIntOrNull()
                 ?: (subEpisodes.size + dubEpisodes.size + 1)
-
-            val epImage = element.selectFirst("img")
-            val rawEpPoster =
-                epImage?.attr("data-lazy-src")?.takeIf { it.isNotBlank() }
-                    ?: epImage?.attr("data-src")?.takeIf { it.isNotBlank() }
-                    ?: epImage?.attr("data-original")?.takeIf { it.isNotBlank() }
-                    ?: epImage?.attr("src")?.takeIf { it.isNotBlank() }
-
-            val epPoster = fixUrlNull(rawEpPoster)
 
             val episode = newEpisode(href) {
                 name = episodeName
                 episode = episodeNumber
-                posterUrl = epPoster
             }
 
             if (episodeName.contains("พากย์ไทย", ignoreCase = true)) {
@@ -264,29 +203,15 @@ class AnimeWakuProvider : MainAPI() {
         subEpisodes.sortBy { it.episode }
         dubEpisodes.sortBy { it.episode }
 
-        return newAnimeLoadResponse(
-            title,
-            url,
-            TvType.Anime
-        ) {
+        return newAnimeLoadResponse(title, url, TvType.Anime) {
             posterUrl = poster
             plot = description
-
-            if (subEpisodes.isNotEmpty()) {
-                addEpisodes(
-                    DubStatus.Subbed,
-                    subEpisodes
-                )
-            }
-
-            if (dubEpisodes.isNotEmpty()) {
-                addEpisodes(
-                    DubStatus.Dubbed,
-                    dubEpisodes
-                )
-            }
+            if (subEpisodes.isNotEmpty()) addEpisodes(DubStatus.Subbed, subEpisodes)
+            if (dubEpisodes.isNotEmpty()) addEpisodes(DubStatus.Dubbed, dubEpisodes)
         }
     }
+
+
 
     private fun findDescription(
         document: org.jsoup.nodes.Document
@@ -318,94 +243,104 @@ class AnimeWakuProvider : MainAPI() {
     // LOAD LINKS (Step-by-Step Diagnostic Mode)
     // ------------------------------------------------------------
 
+//    override suspend fun loadLinks(
+//        data: String,
+//        isCasting: Boolean,
+//        subtitleCallback: (SubtitleFile) -> Unit,
+//        callback: (ExtractorLink) -> Unit
+//    ): Boolean {
+//        // ขั้นตอนที่ 1: ดึงหน้า Episode (ใส่ try ให้ครบ)
+//        val document = try {
+//            app.get(url = data, headers = defaultHeaders).document
+//        } catch (e: Exception) {
+//            throw ErrorLoadingException("สเต็ป 1 ล้มเหลว: โหลดหน้าตอนไม่ได้ (${e.message})")
+//        }
+//
+//        // ขั้นตอนที่ 2: ค้นหาแท็บปุ่ม Player
+//        val allOptions = document.select("ul#playeroptionsul li, li.dooplay_player_option")
+//        if (allOptions.isEmpty()) {
+//            throw ErrorLoadingException("สเต็ป 2 ล้มเหลว: หาปุ่มตัวเลือก Player ไม่พบใน DOM")
+//        }
+//
+//        val targetOption = allOptions.find {
+//            it.text().contains("2") || it.attr("data-nume") == "2"
+//        } ?: allOptions.first()!!
+//
+//        val postId = targetOption.attr("data-post").trim()
+//        val nume = targetOption.attr("data-nume").trim()
+//        val type = targetOption.attr("data-type").trim()
+//
+//        if (postId.isEmpty() || nume.isEmpty()) {
+//            throw ErrorLoadingException("สเต็ป 2.1 ล้มเหลว: Attribute ไม่ครบ (post='$postId', nume='$nume')")
+//        }
+//
+//        // ขั้นตอนที่ 3: ส่ง AJAX ขอ Iframe
+//        val ajaxRes = try {
+//            app.post(
+//                url = "$mainUrl/wp-admin/admin-ajax.php",
+//                data = mapOf(
+//                    "action" to "doo_player_ajax",
+//                    "post" to postId,
+//                    "nume" to nume,
+//                    "type" to type
+//                ),
+//                headers = defaultHeaders + mapOf(
+//                    "X-Requested-With" to "XMLHttpRequest",
+//                    "Referer" to data
+//                )
+//            )
+//        } catch (e: Exception) {
+//            throw ErrorLoadingException("สเต็ป 3 ล้มเหลว: ยิง AJAX ไม่สำเร็จ (${e.message})")
+//        }
+//
+//        val rawIframe = org.jsoup.Jsoup.parse(ajaxRes.text).selectFirst("iframe")?.attr("src")
+//            ?: throw ErrorLoadingException("สเต็ป 3.1 ล้มเหลว: AJAX ไม่ส่งแท็ก iframe กลับมา (ตอบกลับ: '${ajaxRes.text.take(80)}')")
+//
+//        val wrapperUrl = fixUrlNull(rawIframe)
+//            ?: throw ErrorLoadingException("สเต็ป 3.2 ล้มเหลว: แปลง URL iframe ไม่สำเร็จ ($rawIframe)")
+//
+//        // ขั้นตอนที่ 4: โหลดหน้า Wrapper ของ DooDee
+//        val playerDoc = try {
+//            app.get(wrapperUrl, referer = data, headers = defaultHeaders)
+//        } catch (e: Exception) {
+//            throw ErrorLoadingException("สเต็ป 4 ล้มเหลว: ดึงหน้า DooDee Wrapper ไม่สำเร็จ (${e.message})")
+//        }
+//
+//        val playerHtml = playerDoc.text
+//        val innerIframe = playerDoc.document.selectFirst("iframe#embedvideo, iframe")?.attr("src")
+//        val finalUrl = fixUrlNull(innerIframe) ?: wrapperUrl
+//
+//        val finalHtml = if (finalUrl != wrapperUrl) {
+//            try {
+//                app.get(finalUrl, referer = wrapperUrl, headers = defaultHeaders).text
+//            } catch (e: Exception) {
+//                playerHtml
+//            }
+//        } else {
+//            playerHtml
+//        }
+//
+//        // ขั้นตอนที่ 5: พ่นผลลัพธ์เพื่อวินิจฉัยจุดที่ Hash ซ่อนอยู่
+//        val txtFound = Regex("""https?://[^"'<>\s]+\/m3u8\/[a-fA-F0-9]{32}-[0-9]+\.txt""").find(finalHtml)?.value
+//        val hashFound = Regex("""[a-fA-F0-9]{32}""").find(finalHtml)?.value
+//
+//        throw ErrorLoadingException(
+//            "วินิจฉัยหน้าสำเร็จ!\n" +
+//                    "• Final URL: $finalUrl\n" +
+//                    "• Direct .txt: ${txtFound ?: "ไม่พบ"}\n" +
+//                    "• Hash 32: ${hashFound ?: "ไม่พบ"}\n" +
+//                    "• HTML Size: ${finalHtml.length} ตัวอักษร"
+//        )
+//    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // ขั้นตอนที่ 1: ดึงหน้า Episode (ใส่ try ให้ครบ)
-        val document = try {
-            app.get(url = data, headers = defaultHeaders).document
-        } catch (e: Exception) {
-            throw ErrorLoadingException("สเต็ป 1 ล้มเหลว: โหลดหน้าตอนไม่ได้ (${e.message})")
-        }
-
-        // ขั้นตอนที่ 2: ค้นหาแท็บปุ่ม Player
-        val allOptions = document.select("ul#playeroptionsul li, li.dooplay_player_option")
-        if (allOptions.isEmpty()) {
-            throw ErrorLoadingException("สเต็ป 2 ล้มเหลว: หาปุ่มตัวเลือก Player ไม่พบใน DOM")
-        }
-
-        val targetOption = allOptions.find {
-            it.text().contains("2") || it.attr("data-nume") == "2"
-        } ?: allOptions.first()!!
-
-        val postId = targetOption.attr("data-post").trim()
-        val nume = targetOption.attr("data-nume").trim()
-        val type = targetOption.attr("data-type").trim()
-
-        if (postId.isEmpty() || nume.isEmpty()) {
-            throw ErrorLoadingException("สเต็ป 2.1 ล้มเหลว: Attribute ไม่ครบ (post='$postId', nume='$nume')")
-        }
-
-        // ขั้นตอนที่ 3: ส่ง AJAX ขอ Iframe
-        val ajaxRes = try {
-            app.post(
-                url = "$mainUrl/wp-admin/admin-ajax.php",
-                data = mapOf(
-                    "action" to "doo_player_ajax",
-                    "post" to postId,
-                    "nume" to nume,
-                    "type" to type
-                ),
-                headers = defaultHeaders + mapOf(
-                    "X-Requested-With" to "XMLHttpRequest",
-                    "Referer" to data
-                )
-            )
-        } catch (e: Exception) {
-            throw ErrorLoadingException("สเต็ป 3 ล้มเหลว: ยิง AJAX ไม่สำเร็จ (${e.message})")
-        }
-
-        val rawIframe = org.jsoup.Jsoup.parse(ajaxRes.text).selectFirst("iframe")?.attr("src")
-            ?: throw ErrorLoadingException("สเต็ป 3.1 ล้มเหลว: AJAX ไม่ส่งแท็ก iframe กลับมา (ตอบกลับ: '${ajaxRes.text.take(80)}')")
-
-        val wrapperUrl = fixUrlNull(rawIframe)
-            ?: throw ErrorLoadingException("สเต็ป 3.2 ล้มเหลว: แปลง URL iframe ไม่สำเร็จ ($rawIframe)")
-
-        // ขั้นตอนที่ 4: โหลดหน้า Wrapper ของ DooDee
-        val playerDoc = try {
-            app.get(wrapperUrl, referer = data, headers = defaultHeaders)
-        } catch (e: Exception) {
-            throw ErrorLoadingException("สเต็ป 4 ล้มเหลว: ดึงหน้า DooDee Wrapper ไม่สำเร็จ (${e.message})")
-        }
-
-        val playerHtml = playerDoc.text
-        val innerIframe = playerDoc.document.selectFirst("iframe#embedvideo, iframe")?.attr("src")
-        val finalUrl = fixUrlNull(innerIframe) ?: wrapperUrl
-
-        val finalHtml = if (finalUrl != wrapperUrl) {
-            try {
-                app.get(finalUrl, referer = wrapperUrl, headers = defaultHeaders).text
-            } catch (e: Exception) {
-                playerHtml
-            }
-        } else {
-            playerHtml
-        }
-
-        // ขั้นตอนที่ 5: พ่นผลลัพธ์เพื่อวินิจฉัยจุดที่ Hash ซ่อนอยู่
-        val txtFound = Regex("""https?://[^"'<>\s]+\/m3u8\/[a-fA-F0-9]{32}-[0-9]+\.txt""").find(finalHtml)?.value
-        val hashFound = Regex("""[a-fA-F0-9]{32}""").find(finalHtml)?.value
-
-        throw ErrorLoadingException(
-            "วินิจฉัยหน้าสำเร็จ!\n" +
-                    "• Final URL: $finalUrl\n" +
-                    "• Direct .txt: ${txtFound ?: "ไม่พบ"}\n" +
-                    "• Hash 32: ${hashFound ?: "ไม่พบ"}\n" +
-                    "• HTML Size: ${finalHtml.length} ตัวอักษร"
-        )
+        // บังคับให้พ่น URL ออกมาดูทันทีเมื่อกดเล่น เพื่อเช็กว่าเข้าฟังก์ชันนี้จริงไหม
+        throw ErrorLoadingException("DEBUG SUCCESS: เข้า loadLinks สำเร็จ! URL คือ: $data")
     }
 
     // ------------------------------------------------------------
