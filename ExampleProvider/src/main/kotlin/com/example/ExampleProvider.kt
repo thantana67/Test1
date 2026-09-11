@@ -17,7 +17,7 @@ class ExampleProvider : MainAPI() {
         val res = app.get(url).parsedSafe<ArchiveSearchResponse>()
         val items = res?.response?.docs?.mapNotNull { doc ->
             val id = doc.identifier ?: return@mapNotNull null
-            newMovieSearchResponse(doc.title ?: id, id) {
+            newMovieSearchResponse(doc.title ?: id, "https://archive.org/details/$id") {
                 this.posterUrl = "https://archive.org/services/img/$id"
             }
         } ?: emptyList()
@@ -29,17 +29,17 @@ class ExampleProvider : MainAPI() {
         val res = app.get(url).parsedSafe<ArchiveSearchResponse>()
         return res?.response?.docs?.mapNotNull { doc ->
             val id = doc.identifier ?: return@mapNotNull null
-            newMovieSearchResponse(doc.title ?: id, id) {
+            newMovieSearchResponse(doc.title ?: id, "https://archive.org/details/$id") {
                 this.posterUrl = "https://archive.org/services/img/$id"
             }
         } ?: emptyList()
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val id = url
+        val id = url.substringAfterLast("/")
         val meta = app.get("https://archive.org/metadata/$id").parsedSafe<ArchiveMetadata>()
         val title = meta?.metadata?.title ?: id
-        return newMovieLoadResponse(title, id, TvType.Movie, id) {
+        return newMovieLoadResponse(title, url, TvType.Movie, id) {
             this.posterUrl = "https://archive.org/services/img/$id"
             this.plot = meta?.metadata?.description
         }
