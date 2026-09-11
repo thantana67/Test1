@@ -37,32 +37,8 @@ class AnimeWakuProvider : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-
-        val url = when {
-            page <= 1 -> "$mainUrl/anime/?get=anime"
-            else -> "$mainUrl/anime/page/$page/?get=anime"
-        }
-
-        return try {
-            val document = app.get(
-                url = url,
-                headers = defaultHeaders
-            ).document
-
-            val results = parseAnimeLinks(document)
-
-            newHomePageResponse(
-                request.name,
-                results,
-                hasNext = results.isNotEmpty()
-            )
-        } catch (e: Exception) {
-            newHomePageResponse(
-                request.name,
-                emptyList(),
-                hasNext = false
-            )
-        }
+        // ทดสอบพ่นข้อความทันทีที่เปิดหน้าแรกของแอป
+        throw ErrorLoadingException("TEST MAINPAGE: โค้ดทำงานแล้ว!")
     }
 
     // ------------------------------------------------------------
