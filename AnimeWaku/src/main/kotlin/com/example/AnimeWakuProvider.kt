@@ -14,18 +14,16 @@ class AnimeWakuProvider : MainAPI() {
     override val hasMainPage = true
 
     // กำหนด Headers ให้ตรงกับ Android Chrome เต็มรูปแบบ
+    private val pcUserAgent = "'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36'้"
+
+    private val cfClearance = "f3jd0Pb7lRH5xzMJjMxm2a.nIodyn1pW4.RgUtZVJpo-1789136340-1.2.1.1-mmkXMXWgiuSORd_TWZSVxPgs3_7MFMTV5JNIm9wApZR4tNJu6rCVuyoHjLUiPBaDPR8VGFxQ.lVazb4kMb8kiXJjEx7Q.VcAZbhXCup.Y1xFO6s_kR_WxC89c04mHzt4DON8TmddKxHyGdi59zvq.rqDtkUgV27pxHvb5HTMz9bcM8qcUTYdYvIDWgV7TB6kl6yq9dZr_hkZHA3UGXcMbohaAeVFMlabJk8pOIvbOf2B2Qzs_ULY55z4DL8hWd5.Nw85gfKxUEbV0FI_Vd4GW74Z3zQdD15gG_8j37jc0_xu_zIlI9dNxs2cZTXjv9KS6.TCPQMDsdwMHfLKndOqC9PXP8y5FRgMnee5dl06_N8"
+
     private val defaultHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        "User-Agent" to pcUserAgent,
+        "Cookie" to "cf_clearance=$cfClearance",
+        "Referer" to "$mainUrl/",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language" to "th-TH,th;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Sec-Ch-Ua" to "\"Not-A.Brand\";v=\"99\", \"Chromium\";v=\"124\"",
-        "Sec-Ch-Ua-Mobile" to "?1",
-        "Sec-Ch-Ua-Platform" to "\"Android\"",
-        "Sec-Fetch-Dest" to "document",
-        "Sec-Fetch-Mode" to "navigate",
-        "Sec-Fetch-Site" to "none",
-        "Sec-Fetch-User" to "?1",
-        "Upgrade-Insecure-Requests" to "1"
+        "Accept-Language" to "th-TH,th;q=0.9,en-US;q=0.8,en;q=0.7"
     )
 
     override val mainPage = mainPageOf(
