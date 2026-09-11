@@ -37,8 +37,18 @@ class AnimeWakuProvider : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        // ทดสอบพ่นข้อความทันทีที่เปิดหน้าแรกของแอป
-        throw ErrorLoadingException("TEST MAINPAGE: โค้ดทำงานแล้ว!")
+        val url = when {
+            page <= 1 -> "$mainUrl/anime/?get=anime"
+            else -> "$mainUrl/anime/page/$page/?get=anime"
+        }
+
+        return try {
+            val document = app.get(url = url, headers = defaultHeaders).document
+            val results = parseAnimeLinks(document)
+            newHomePageResponse(request.name, results, hasNext = results.isNotEmpty())
+        } catch (e: Exception) {
+            newHomePageResponse(request.name, emptyList(), hasNext = false)
+        }
     }
 
     // ------------------------------------------------------------
@@ -315,8 +325,8 @@ class AnimeWakuProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // บังคับให้พ่น URL ออกมาดูทันทีเมื่อกดเล่น เพื่อเช็กว่าเข้าฟังก์ชันนี้จริงไหม
-        throw ErrorLoadingException("DEBUG SUCCESS: เข้า loadLinks สำเร็จ! URL คือ: $data")
+        // เมื่อกดเลือกตอน ดูว่าแอปวิ่งมาถึงตรงนี้และส่ง URL อะไรมา
+        throw ErrorLoadingException("DEBUG loadLinks: ทำงานแล้ว! URL ตอนคือ = $data")
     }
 
     // ------------------------------------------------------------
