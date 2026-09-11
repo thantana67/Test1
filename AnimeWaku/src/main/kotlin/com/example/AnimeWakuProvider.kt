@@ -324,17 +324,17 @@ class AnimeWakuProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // ขั้นตอนที่ 1: ดึงหน้า Episode
+        // ขั้นตอนที่ 1: ดึงหน้า Episode (ใส่ try ให้ครบ)
         val document = try {
             app.get(url = data, headers = defaultHeaders).document
         } catch (e: Exception) {
-            throw ErrorLoadingException("สเต็ป 1 ล้มเหลว: ไม่สามารถโหลดหน้าตอนได้ (${e.message})")
+            throw ErrorLoadingException("สเต็ป 1 ล้มเหลว: โหลดหน้าตอนไม่ได้ (${e.message})")
         }
 
         // ขั้นตอนที่ 2: ค้นหาแท็บปุ่ม Player
         val allOptions = document.select("ul#playeroptionsul li, li.dooplay_player_option")
         if (allOptions.isEmpty()) {
-            throw ErrorLoadingException("สเต็ป 2 ล้มเหลว: หาปุ่มตัวเลือก Player ไม่พบเลยใน DOM")
+            throw ErrorLoadingException("สเต็ป 2 ล้มเหลว: หาปุ่มตัวเลือก Player ไม่พบใน DOM")
         }
 
         val targetOption = allOptions.find {
@@ -346,7 +346,7 @@ class AnimeWakuProvider : MainAPI() {
         val type = targetOption.attr("data-type").trim()
 
         if (postId.isEmpty() || nume.isEmpty()) {
-            throw ErrorLoadingException("สเต็ป 2.1 ล้มเหลว: ค่า Attribute ไม่ครบ (post='$postId', nume='$nume')")
+            throw ErrorLoadingException("สเต็ป 2.1 ล้มเหลว: Attribute ไม่ครบ (post='$postId', nume='$nume')")
         }
 
         // ขั้นตอนที่ 3: ส่ง AJAX ขอ Iframe
@@ -365,14 +365,14 @@ class AnimeWakuProvider : MainAPI() {
                 )
             )
         } catch (e: Exception) {
-            throw ErrorLoadingException("สเต็ป 3 ล้มเหลว: ส่งคำขอ AJAX ไม่สำเร็จ (${e.message})")
+            throw ErrorLoadingException("สเต็ป 3 ล้มเหลว: ยิง AJAX ไม่สำเร็จ (${e.message})")
         }
 
         val rawIframe = org.jsoup.Jsoup.parse(ajaxRes.text).selectFirst("iframe")?.attr("src")
             ?: throw ErrorLoadingException("สเต็ป 3.1 ล้มเหลว: AJAX ไม่ส่งแท็ก iframe กลับมา (ตอบกลับ: '${ajaxRes.text.take(80)}')")
 
         val wrapperUrl = fixUrlNull(rawIframe)
-            ?: throw ErrorLoadingException("สเต็ป 3.2 ล้มเหลว: แปลง URL ของ Iframe ไม่สำเร็จ ($rawIframe)")
+            ?: throw ErrorLoadingException("สเต็ป 3.2 ล้มเหลว: แปลง URL iframe ไม่สำเร็จ ($rawIframe)")
 
         // ขั้นตอนที่ 4: โหลดหน้า Wrapper ของ DooDee
         val playerDoc = try {
