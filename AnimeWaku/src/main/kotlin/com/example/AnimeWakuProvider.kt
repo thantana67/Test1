@@ -418,96 +418,94 @@ class AnimeWakuProvider : MainAPI() {
     // LOAD LINKS
     // ------------------------------------------------------------
 
+    // ------------------------------------------------------------
+    // LOAD LINKS (2-Layer DooPlay Player + DooDee)
+    // ------------------------------------------------------------
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-
         return try {
-
             val document = app.get(
                 url = data,
                 headers = defaultHeaders
             ).document
 
-            /*
-             * Anime-Waku episode page
-             *
-             * หน้า episode จะมี player หลัก / สำรอง
-             *
-             * พยายามหา iframe ทุกตัว
-             */
-            val iframes = document.select("iframe")
+            // 1. ดึงข้อมูลจากปุ่ม Player ทั้งหมด (แท็บเปลี่ยนเซิร์ฟเวอร์)
+            val playerOptions = document.select("ul#playeroptionsul li, li.dooplay_player_option")
 
-            for (iframe in iframes) {
+            for (option in playerOptions) {
+                val postId = option.attr("data-post").trim()
+                val nume = option.attr("data-nume").trim()
+                val type = option.attr("data-type").trim()
 
-                val src = iframe.attr("src").trim()
+                if (postId.isEmpty() || nume.isEmpty()) continue
 
-                if (src.isBlank()) continue
-
-                val embedUrl = fixUrlNull(src)
-                    ?: continue
-
-                try {
-
-                    loadExtractor(
-                        embedUrl,
-                        data,
-                        subtitleCallback,
-                        callback
-                    )
-
+                // 2. เรียก AJAX เพื่อขอ iframe ชั้นที่ 1
+                val ajaxHtml = try {
+                    app.post(
+                        url = "$mainUrl/wp-admin/admin-ajax.php",
+                        data = mapOf(
+                            "action" to "doo_player_ajax",
+                            "post" to postId,
+                            "nume" to nume,
+                            "type" to type
+                        ),
+                        headers = defaultHeaders + mapOf(
+                            "X-Requested-With" to "XMLHttpRequest",
+                            "Referer" to data
+                        )
+                    ).text
                 } catch (_: Exception) {
-                    // ข้าม player ที่ extractor ไม่รองรับ
-                }
-            }
-
-            /*
-             * กรณีเว็บใส่ player URL อยู่ใน data-src
-             */
-            val dataSrcPlayers = document.select(
-                "[data-src], [data-url]"
-            )
-
-            for (player in dataSrcPlayers) {
-
-                val raw =
-                    player.attr("data-src").ifBlank {
-                        player.attr("data-url")
-                    }
-
-                if (raw.isBlank()) continue
-
-                val playerUrl = fixUrlNull(raw)
-                    ?: continue
-
-                if (
-                    !playerUrl.startsWith("http://") &&
-                    !playerUrl.startsWith("https://")
-                ) {
                     continue
                 }
 
-                try {
+                val wrapperDoc = org.jsoup.Jsoup.parse(ajaxHtml)
+                val rawWrapperUrl = wrapperDoc.selectFirst("iframe")?.attr("src") ?: continue
+                val wrapperUrl = fixUrlNull(rawWrapperUrl) ?: continue
 
-                    loadExtractor(
-                        playerUrl,
-                        data,
-                        subtitleCallback,
-                        callback
-                    )
+                // 3. เข้าไปดึง iframe ชั้นที่ 2 จากหน้า DooDee-Player / Wrapper
+                val embedUrl = try {
+                    val wrapperPage = app.get(
+                        url = wrapperUrl,
+                        referer = data,
+                        headers = defaultHeaders
+                    ).document
 
+                    val rawEmbed = wrapperPage.selectFirst("iframe#embedvideo")?.attr("src")
+                        ?: wrapperPage.selectFirst("iframe")?.attr("src")
+                    fixUrlNull(rawEmbed)
                 } catch (_: Exception) {
-                    // ข้าม player ที่ extractor ไม่รองรับ
+                    null
+                }
+
+                // 4. ส่ง URL ตัวเล่นจริงเข้า Extractor
+                val targetUrl = embedUrl ?: wrapperUrl
+                try {
+                    loadExtractor(
+                        url = targetUrl,
+                        referer = wrapperUrl,
+                        subtitleCallback = subtitleCallback,
+                        callback = callback
+                    )
+                } catch (_: Exception) {
+                    // ข้าม extractor ที่ไม่ซัพพอร์ต
                 }
             }
 
+            // Fallback: หากหน้าเว็บมีการแปะ iframe ตรงๆ ไว้
+            document.select("iframe").forEach { iframe ->
+                val src = fixUrlNull(iframe.attr("src")) ?: return@forEach
+                try {
+                    loadExtractor(src, data, subtitleCallback, callback)
+                } catch (_: Exception) { }
+            }
+
             true
-
         } catch (_: Exception) {
-
             false
         }
     }
