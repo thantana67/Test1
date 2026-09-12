@@ -290,10 +290,16 @@ class AnimeWakuProvider : MainAPI() {
                         fixUrlNull(embedUrl)
                             ?: continue
 
+                    val extractorUrl = if (wrapperUrl.contains("ok.ru/videoembed/")) {
+                        wrapperUrl.replace("/videoembed/", "/video/")
+                    } else {
+                        wrapperUrl
+                    }
+
                     // Prefer CloudStream's registered extractor for external hosts
                     // such as ok.ru. Do this before loading the iframe page because
                     // some hosts reject plain HTTP requests with Cloudflare.
-                    if (loadExtractor(wrapperUrl, data, subtitleCallback, callback)) {
+                    if (loadExtractor(extractorUrl, "$mainUrl/", subtitleCallback, callback)) {
                         loaded = true
                         continue
                     }
@@ -333,7 +339,7 @@ class AnimeWakuProvider : MainAPI() {
 
                     // The player may create the real stream only after JavaScript runs.
                     if (!loaded) {
-                        val candidates = (listOf(wrapperUrl) + pages.map { it.second }).distinct()
+                        val candidates = (listOf(extractorUrl, wrapperUrl) + pages.map { it.second }).distinct()
                         for (candidateUrl in candidates) {
                             if (loadExtractor(candidateUrl, data, subtitleCallback, callback)) {
                                 loaded = true
