@@ -1,6 +1,7 @@
 package com.example
 
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.utils.*
 import java.net.URLEncoder
 import java.net.URI
@@ -320,18 +321,64 @@ class AnimeWakuProvider : MainAPI() {
                             loaded = true
                         }
 
-                        Regex("""(?<![a-fA-F0-9])[a-fA-F0-9]{32}(?![a-fA-F0-9])""")
-                            .find(normalized)?.value?.let { hash ->
-                                listOf("1080", "720", "480", "360").forEach { quality ->
-                                    val playlistUrl = "https://player-ok-goal.doodee-player.com/m3u8/$hash-$quality.txt"
-                                    if (!seenPlaylistUrls.add(playlistUrl)) return@forEach
-                                    callback.invoke(newExtractorLink(name, "$name Player $nume ($quality)", playlistUrl, ExtractorLinkType.M3U8) {
-                                        this.quality = quality.toInt()
-                                        referer = pageUrl
-                                    })
-                                    loaded = true
-                                }
+                    }
+
+                    // The player may create the real stream only after JavaScript runs.
+                    if (!loaded) {
+                        val candidates = (listOf(wrapperUrl) + pages.map { it.second }).distinct()
+                        for (candidateUrl in candidates) {
+                            if (loadExtractor(candidateUrl, data, subtitleCallback, callback)) {
+                                loaded = true
+                                break
                             }
+                        }
+                    }
+
+                    if (!loaded) {
+                        val resolver = WebViewResolver(
+                            interceptUrl = Regex("""(?i)\.(m3u8|mp4)(?:\?|$)"""),
+                            additionalUrls = listOf(Regex("""(?i)\.(m3u8|mp4)(?:\?|$)""")),
+                            script = """
+                                document.querySelector('video,button,[role="button"],.jw-icon-display,.vjs-big-play-button,.vds-play-button')?.click();
+                            """.trimIndent(),
+                            useOkhttp = false,
+                            timeout = 30_000L
+                        )
+
+                        val candidates = (listOf(wrapperUrl) + pages.map { it.second }).distinct()
+                        for (candidateUrl in candidates) {
+                            val resolved = app.get(
+                                candidateUrl,
+                                referer = data,
+                                interceptor = resolver
+                            ).url
+
+                            if (!resolved.contains(".m3u8", ignoreCase = true) &&
+                                !resolved.contains(".mp4", ignoreCase = true)
+                            ) continue
+
+                            val linkType = if (resolved.contains(".m3u8", ignoreCase = true)) {
+                                ExtractorLinkType.M3U8
+                            } else {
+                                ExtractorLinkType.VIDEO
+                            }
+
+                            callback.invoke(newExtractorLink(
+                                name,
+                                "$name Player $nume",
+                                resolved,
+                                linkType
+                            ) {
+                                quality = Qualities.P720.value
+                                referer = candidateUrl
+                                headers = mapOf(
+                                    "User-Agent" to defaultHeaders["User-Agent"].orEmpty(),
+                                    "Referer" to candidateUrl
+                                )
+                            })
+                            loaded = true
+                            break
+                        }
                     }
 
                 } catch (_: Exception) {
