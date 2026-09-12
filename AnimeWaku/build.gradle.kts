@@ -4,7 +4,7 @@ dependencies {
 }
 
 // Use an integer for version numbersadad
-version = 19
+version = 20
 
 cloudstream {
     description = "ANime wiTH THAI SUBS"

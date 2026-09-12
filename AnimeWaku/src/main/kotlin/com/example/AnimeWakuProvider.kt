@@ -325,75 +325,261 @@ class AnimeWakuProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+
         try {
-            val document = app.get(url = data, headers = defaultHeaders).document
+            // ------------------------------------------------------------
+            // 1. โหลดหน้า episode
+            // ------------------------------------------------------------
+            val document = app.get(
+                url = data,
+                headers = defaultHeaders
+            ).document
 
-            // 1. ค้นหาปุ่มตัวเล่น
-            val allOptions = document.select("ul#playeroptionsul li, li.dooplay_player_option")
-            val targetOption = allOptions.find {
-                it.text().contains("2") || it.attr("data-nume") == "2"
-            } ?: allOptions.firstOrNull()
-
-            if (targetOption == null) {
-                // ถ้าหาปุ่มไม่เจอ ส่งลิงก์สำรองเพื่อให้แอปไม่พัง
-                callback.invoke(
-                    newExtractorLink(
-                        source = name,
-                        name = "$name (Fallback Test)",
-                        url = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.quality = Qualities.P720.value
-                    }
-                )
-                return true
-            }
-
-            val postId = targetOption.attr("data-post").trim()
-            val nume = targetOption.attr("data-nume").trim()
-            val type = targetOption.attr("data-type").trim()
-
-            // 2. เรียก AJAX ดึง Iframe
-            val ajaxRes = app.post(
-                url = "$mainUrl/wp-admin/admin-ajax.php",
-                data = mapOf(
-                    "action" to "doo_player_ajax",
-                    "post" to postId,
-                    "nume" to nume,
-                    "type" to type
-                ),
-                headers = defaultHeaders + mapOf(
-                    "X-Requested-With" to "XMLHttpRequest",
-                    "Referer" to data
-                )
+            // ------------------------------------------------------------
+            // 2. หา player options ทั้งหมด
+            // ------------------------------------------------------------
+            val allOptions = document.select(
+                "ul#playeroptionsul li, li.dooplay_player_option"
             )
 
-            val rawIframe = org.jsoup.Jsoup.parse(ajaxRes.text).selectFirst("iframe")?.attr("src") ?: return false
-            val wrapperUrl = fixUrlNull(rawIframe) ?: return false
-
-            // 3. ดึงหน้า Player มาแกะหา Hash
-            val playerHtml = app.get(wrapperUrl, referer = data, headers = defaultHeaders).text
-            val hashMatch = Regex("""[a-fA-F0-9]{32}""").find(playerHtml)?.value
-
-            if (hashMatch != null) {
-                val streamUrl = "https://player-ok-goal.doodee-player.com/m3u8/$hashMatch-720.txt"
-                callback.invoke(
-                    newExtractorLink(
-                        source = name,
-                        name = "$name DooDee 720p",
-                        url = streamUrl,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = wrapperUrl
-                        this.quality = Qualities.P720.value
-                    }
-                )
-                return true
+            if (allOptions.isEmpty()) {
+                return false
             }
 
-        } catch (_: Exception) { }
+            var foundLink = false
 
-        return false
+            // ลองทุก player ไม่ใช่เลือกแค่ player 2
+            for (option in allOptions) {
+
+                val postId = option.attr("data-post").trim()
+                val nume = option.attr("data-nume").trim()
+                val type = option.attr("data-type").trim()
+
+                if (postId.isBlank() || nume.isBlank()) {
+                    continue
+                }
+
+                try {
+
+                    // ----------------------------------------------------
+                    // 3. AJAX -> DooDee
+                    // ----------------------------------------------------
+                    val ajaxRes = app.post(
+                        url = "$mainUrl/wp-admin/admin-ajax.php",
+                        data = mapOf(
+                            "action" to "doo_player_ajax",
+                            "post" to postId,
+                            "nume" to nume,
+                            "type" to type
+                        ),
+                        headers = defaultHeaders + mapOf(
+                            "X-Requested-With" to "XMLHttpRequest",
+                            "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+                            "Origin" to mainUrl,
+                            "Referer" to data
+                        )
+                    )
+
+                    val responseText = ajaxRes.text.trim()
+
+                    if (responseText.isBlank()) {
+                        continue
+                    }
+
+                    // ----------------------------------------------------
+                    // 4. DooPlay มักตอบ JSON:
+                    //    {"embed_url":"...","type":"iframe"}
+                    // ----------------------------------------------------
+                    var embedUrl: String? = null
+
+                    try {
+                        val json = org.json.JSONObject(responseText)
+
+                        embedUrl = json.optString("embed_url")
+                            .takeIf { it.isNotBlank() }
+
+                    } catch (_: Exception) {
+                        // ไม่ใช่ JSON -> ลองหา iframe จาก HTML ต่อ
+                    }
+
+                    // ----------------------------------------------------
+                    // 5. fallback: response เป็น HTML / iframe
+                    // ----------------------------------------------------
+                    if (embedUrl.isNullOrBlank()) {
+
+                        embedUrl =
+                            org.jsoup.Jsoup
+                                .parse(responseText)
+                                .selectFirst("iframe")
+                                ?.attr("src")
+                                ?.trim()
+                    }
+
+                    if (embedUrl.isNullOrBlank()) {
+                        continue
+                    }
+
+                    val wrapperUrl = fixUrlNull(embedUrl)
+                        ?: continue
+
+                    // ----------------------------------------------------
+                    // 6. โหลดหน้า wrapper
+                    // ----------------------------------------------------
+                    val wrapperResponse = try {
+                        app.get(
+                            url = wrapperUrl,
+                            headers = defaultHeaders,
+                            referer = data
+                        )
+                    } catch (_: Exception) {
+                        continue
+                    }
+
+                    var playerHtml = wrapperResponse.text
+
+                    if (playerHtml.isBlank()) {
+                        continue
+                    }
+
+                    // ----------------------------------------------------
+                    // 7. บาง wrapper มี iframe ซ้อนอีกชั้น
+                    // ----------------------------------------------------
+                    val innerIframe = wrapperResponse.document
+                        .selectFirst("iframe")
+                        ?.attr("src")
+                        ?.trim()
+
+                    if (!innerIframe.isNullOrBlank()) {
+
+                        val innerUrl = fixUrlNull(innerIframe)
+
+                        if (innerUrl != null) {
+
+                            try {
+
+                                val innerResponse = app.get(
+                                    url = innerUrl,
+                                    headers = defaultHeaders,
+                                    referer = wrapperUrl
+                                )
+
+                                if (innerResponse.text.isNotBlank()) {
+                                    playerHtml = innerResponse.text
+                                }
+
+                            } catch (_: Exception) {
+                                // ใช้ wrapper เดิมต่อ
+                            }
+                        }
+                    }
+
+                    // ----------------------------------------------------
+                    // 8. หา URL m3u8 โดยตรงก่อน
+                    // ----------------------------------------------------
+
+                    val directM3u8 = Regex(
+                        """https?://[^"'\\\s<>]+\.m3u8[^"'\\\s<>]*"""
+                    )
+                        .find(playerHtml)
+                        ?.value
+                        ?.replace("\\/", "/")
+                        ?.replace("\\\"", "\"")
+
+                    if (!directM3u8.isNullOrBlank()) {
+
+                        callback.invoke(
+                            newExtractorLink(
+                                source = name,
+                                name = "$name Player $nume",
+                                url = directM3u8,
+                                type = ExtractorLinkType.M3U8
+                            ) {
+                                this.referer = wrapperUrl
+                                this.quality = Qualities.P720.value
+                            }
+                        )
+
+                        foundLink = true
+                        continue
+                    }
+
+                    // ----------------------------------------------------
+                    // 9. หา "file":"https://....m3u8"
+                    // ----------------------------------------------------
+
+                    val fileM3u8 = Regex(
+                        """"file"\s*:\s*"(https?://[^"]+)""""
+                    )
+                        .find(playerHtml)
+                        ?.groupValues
+                        ?.getOrNull(1)
+                        ?.replace("\\/", "/")
+                        ?.replace("\\u0026", "&")
+
+                    if (!fileM3u8.isNullOrBlank()) {
+
+                        callback.invoke(
+                            newExtractorLink(
+                                source = name,
+                                name = "$name Player $nume",
+                                url = fileM3u8,
+                                type = ExtractorLinkType.M3U8
+                            ) {
+                                this.referer = wrapperUrl
+                                this.quality = Qualities.P720.value
+                            }
+                        )
+
+                        foundLink = true
+                        continue
+                    }
+
+                    // ----------------------------------------------------
+                    // 10. หา source src
+                    // ----------------------------------------------------
+
+                    val sourceUrl = wrapperResponse.document
+                        .select("source[src]")
+                        .mapNotNull {
+                            fixUrlNull(it.attr("src"))
+                        }
+                        .firstOrNull()
+
+                    if (!sourceUrl.isNullOrBlank()) {
+
+                        val linkType =
+                            if (sourceUrl.contains(".m3u8")) {
+                                ExtractorLinkType.M3U8
+                            } else {
+                                ExtractorLinkType.VIDEO
+                            }
+
+                        callback.invoke(
+                            newExtractorLink(
+                                source = name,
+                                name = "$name Player $nume",
+                                url = sourceUrl,
+                                type = linkType
+                            ) {
+                                this.referer = wrapperUrl
+                                this.quality = Qualities.P720.value
+                            }
+                        )
+
+                        foundLink = true
+                    }
+
+                } catch (_: Exception) {
+                    // player นี้ fail -> ลอง player ถัดไป
+                    continue
+                }
+            }
+
+            return foundLink
+
+        } catch (_: Exception) {
+            return false
+        }
     }
 
     // ------------------------------------------------------------
