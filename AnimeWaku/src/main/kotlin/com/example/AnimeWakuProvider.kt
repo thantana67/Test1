@@ -2,9 +2,9 @@ package com.example
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import org.jsoup.nodes.Element
 import java.net.URLEncoder
 import org.jsoup.Jsoup
+
 class AnimeWakuProvider : MainAPI() {
 
     override var mainUrl = "https://anime-waku.com"
@@ -13,15 +13,9 @@ class AnimeWakuProvider : MainAPI() {
     override var lang = "th"
     override val hasMainPage = true
 
-    private val userAgent =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-
     private val defaultHeaders = mapOf(
-        "User-Agent" to userAgent,
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
         "Referer" to "$mainUrl/",
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9," +
-                "image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language" to "th-TH,th;q=0.9,en-US;q=0.8,en;q=0.7"
     )
 
@@ -29,209 +23,85 @@ class AnimeWakuProvider : MainAPI() {
         "$mainUrl/anime/?get=anime" to "อนิเมะอัปเดตล่าสุด"
     )
 
-    // ------------------------------------------------------------
-    // MAIN PAGE
-    // ------------------------------------------------------------
-
     override suspend fun getMainPage(
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        val url = when {
-            page <= 1 -> "$mainUrl/anime/?get=anime"
-            else -> "$mainUrl/anime/page/$page/?get=anime"
+        val url = if (page <= 1) {
+            "$mainUrl/anime/?get=anime"
+        } else {
+            "$mainUrl/anime/page/$page/?get=anime"
         }
 
         return try {
-            val document = app.get(url = url, headers = defaultHeaders).document
-            val results = parseAnimeLinks(document)
+            val results = parseAnimeLinks(app.get(url, headers = defaultHeaders).document)
             newHomePageResponse(request.name, results, hasNext = results.isNotEmpty())
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             newHomePageResponse(request.name, emptyList(), hasNext = false)
         }
     }
-
-    // ------------------------------------------------------------
-    // SEARCH
-    // ------------------------------------------------------------
-
-    override suspend fun search(
-        query: String
-    ): List<SearchResponse> {
-
+    override suspend fun search(query: String): List<SearchResponse> {
         return try {
-            val encodedQuery = URLEncoder.encode(query, "UTF-8")
-            val url = "$mainUrl/?s=$encodedQuery"
-
-            val document = app.get(
-                url = url,
-                headers = defaultHeaders
-            ).document
-
-            parseAnimeLinks(document)
-
-        } catch (e: Exception) {
+            val url = "$mainUrl/?s=${URLEncoder.encode(query, "UTF-8")}"
+            parseAnimeLinks(app.get(url, headers = defaultHeaders).document)
+        } catch (_: Exception) {
             emptyList()
         }
     }
 
-    // ------------------------------------------------------------
-    // PARSE ANIME CARD / SEARCH RESULT
-    // ------------------------------------------------------------
-
-    private fun parseAnimeLinks(
-        document: org.jsoup.nodes.Document
-    ): List<SearchResponse> {
-
+    private fun parseAnimeLinks(document: org.jsoup.nodes.Document): List<SearchResponse> {
         val results = mutableListOf<SearchResponse>()
         val seen = hashSetOf<String>()
-
         document.select("a[href*='/anime/']").forEach { element ->
-
             val href = fixUrlNull(element.attr("href")) ?: return@forEach
-
-            if (!href.contains("/anime/")) return@forEach
             if (!seen.add(href)) return@forEach
-
-            var title = element.text().trim()
-
-            if (title.isBlank()) {
-                title = element
-                    .selectFirst("img")
-                    ?.attr("alt")
-                    ?.trim()
-                    ?: ""
-            }
-
+            val title = element.text().trim().ifBlank {
+                element.selectFirst("img")?.attr("alt")?.trim().orEmpty()
+            }.replace(Regex("\\s+"), " ").trim()
             if (title.isBlank()) return@forEach
-
-            title = cleanAnimeTitle(title)
-
             val image = element.selectFirst("img")
-            val rawPoster =
-                image?.attr("data-lazy-src")?.takeIf { it.isNotBlank() }
-                    ?: image?.attr("data-src")?.takeIf { it.isNotBlank() }
-                    ?: image?.attr("data-original")?.takeIf { it.isNotBlank() }
-                    ?: image?.attr("src")?.takeIf { it.isNotBlank() }
-
-            val poster = fixUrlNull(rawPoster)
-
-            results.add(
-                newAnimeSearchResponse(
-                    title,
-                    href,
-                    TvType.Anime
-                ) {
-                    posterUrl = poster
-                }
+            val poster = fixUrlNull(
+                listOf("data-lazy-src", "data-src", "data-original", "src")
+                    .asSequence().map { image?.attr(it).orEmpty() }
+                    .firstOrNull { it.isNotBlank() }
             )
+            results += newAnimeSearchResponse(title, href, TvType.Anime) { posterUrl = poster }
         }
-
         return results
     }
 
-    private fun cleanAnimeTitle(
-        title: String
-    ): String {
-
-        return title
-            .replace(Regex("\\s+"), " ")
-            .replace(
-                Regex(
-                    "\\s*ตอนที่\\s*\\d+(?:-\\d+)?\\s*" +
-                            "(?:ซับไทย|พากย์ไทย)?\\s*" +
-                            "(?:และ\\s*(?:พากย์ไทย|ซับไทย))?\\s*" +
-                            "(?:ยังไม่จบ|จบแล้ว)?"
-                ),
-                ""
-            )
-            .trim()
-    }
-
-    // ------------------------------------------------------------
-    // LOAD ANIME DETAIL
-    // ------------------------------------------------------------
-
-    override suspend fun load(
-        url: String
-    ): LoadResponse {
+    override suspend fun load(url: String): LoadResponse {
         val document = app.get(url, headers = defaultHeaders).document
-
         val title = document.selectFirst("h1")?.text()?.trim() ?: "Unknown"
-        val poster = fixUrlNull(document.selectFirst(".poster img, .entry-content img, img")?.attr("src"))
-        val description = findDescription(document)
-
+        val image = document.selectFirst(".poster img, .entry-content img, img")
+        val poster = fixUrlNull(image?.attr("data-lazy-src")?.takeIf { it.isNotBlank() }
+            ?: image?.attr("data-src")?.takeIf { it.isNotBlank() }
+            ?: image?.attr("src"))
         val subEpisodes = mutableListOf<Episode>()
         val dubEpisodes = mutableListOf<Episode>()
+        val seen = hashSetOf<String>()
 
-        // ดึงลิงก์ทุกตัวที่มี /ep/ ในหน้าอนิเมะ
         document.select("a[href*='/ep/']").forEach { element ->
             val href = fixUrlNull(element.attr("href")) ?: return@forEach
+            if (!seen.add(href)) return@forEach
             val episodeName = element.text().trim().ifBlank { "ตอน" }
-
-            // ดึงตัวเลขตอนจากชื่อหรือลิงก์
-            val episodeNumber = Regex("ตอนที่\\s*(\\d+)").find(episodeName)?.groupValues?.get(1)?.toIntOrNull()
+            val number = Regex("ตอนที่\\s*(\\d+)").find(episodeName)?.groupValues?.get(1)?.toIntOrNull()
                 ?: Regex("/ep/(\\d+)").find(href)?.groupValues?.get(1)?.toIntOrNull()
                 ?: (subEpisodes.size + dubEpisodes.size + 1)
-
             val episode = newEpisode(href) {
                 name = episodeName
-                episode = episodeNumber
+                episode = number
             }
-
-            if (episodeName.contains("พากย์ไทย", ignoreCase = true)) {
-                dubEpisodes.add(episode)
-            } else {
-                subEpisodes.add(episode)
-            }
+            if (episodeName.contains("พากย์ไทย", ignoreCase = true)) dubEpisodes += episode
+            else subEpisodes += episode
         }
-
-        subEpisodes.sortBy { it.episode }
-        dubEpisodes.sortBy { it.episode }
 
         return newAnimeLoadResponse(title, url, TvType.Anime) {
             posterUrl = poster
-            plot = description
-            if (subEpisodes.isNotEmpty()) addEpisodes(DubStatus.Subbed, subEpisodes)
-            if (dubEpisodes.isNotEmpty()) addEpisodes(DubStatus.Dubbed, dubEpisodes)
+            if (subEpisodes.isNotEmpty()) addEpisodes(DubStatus.Subbed, subEpisodes.sortedBy { it.episode })
+            if (dubEpisodes.isNotEmpty()) addEpisodes(DubStatus.Dubbed, dubEpisodes.sortedBy { it.episode })
         }
     }
-
-
-
-    private fun findDescription(
-        document: org.jsoup.nodes.Document
-    ): String? {
-
-        val synopsisHeading = document
-            .select("h2, h3, h4")
-            .firstOrNull {
-                it.text().contains("เรื่องย่อ", ignoreCase = true)
-            }
-
-        if (synopsisHeading != null) {
-            val next = synopsisHeading.nextElementSibling()
-            if (next != null) {
-                val text = next.text().trim()
-                if (text.isNotBlank()) return text
-            }
-        }
-
-        return document
-            .select("p")
-            .map { it.text().trim() }
-            .firstOrNull {
-                it.length > 50 && !it.contains("Login to your account")
-            }
-    }
-
-    // ------------------------------------------------------------
-    // LOAD LINKS (Step-by-Step Diagnostic Mode)
-    // ------------------------------------------------------------
-
-//    override suspend fun loadLinks(
-//        data: String,
-//        isCasting: Boolean,
 //        subtitleCallback: (SubtitleFile) -> Unit,
 //        callback: (ExtractorLink) -> Unit
 //    ): Boolean {
@@ -344,6 +214,7 @@ class AnimeWakuProvider : MainAPI() {
             }
 
             var loaded = false
+            val seenPlaylistUrls = hashSetOf<String>()
 
             // 3. Try every player
             for (option in options) {
@@ -505,6 +376,33 @@ class AnimeWakuProvider : MainAPI() {
                         loaded = true
                     }
 
+                    // DooDee may expose only a 32-character hash in the wrapper.
+                    val hash = Regex("""(?<![a-fA-F0-9])[a-fA-F0-9]{32}(?![a-fA-F0-9])""")
+                        .find(html)
+                        ?.value
+
+                    if (hash != null) {
+                        listOf("720", "1080", "480", "360").forEach { quality ->
+                            val playlistUrl =
+                                "https://player-ok-goal.doodee-player.com/m3u8/$hash-$quality.txt"
+
+                            if (!seenPlaylistUrls.add(playlistUrl)) return@forEach
+
+                            callback.invoke(
+                                newExtractorLink(
+                                    source = name,
+                                    name = "$name Player $nume ($quality)",
+                                    url = playlistUrl,
+                                    type = ExtractorLinkType.M3U8
+                                ) {
+                                    this.quality = quality.toInt()
+                                    referer = wrapperUrl
+                                }
+                            )
+                            loaded = true
+                        }
+                    }
+
                 } catch (_: Exception) {
                     continue
                 }
@@ -518,17 +416,4 @@ class AnimeWakuProvider : MainAPI() {
         }
     }
 
-    // ------------------------------------------------------------
-    // SMALL HELPER
-    // ------------------------------------------------------------
-
-    private fun escapeCss(
-        text: String
-    ): String {
-
-        return text
-            .replace("\\", "\\\\")
-            .replace("'", "\\'")
-            .replace("\"", "\\\"")
-    }
 }
