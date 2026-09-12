@@ -4,7 +4,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
-
+import org.jsoup.Jsoup
 class AnimeWakuProvider : MainAPI() {
 
     override var mainUrl = "https://anime-waku.com"
@@ -326,46 +326,48 @@ class AnimeWakuProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
 
-        try {
-            // ------------------------------------------------------------
-            // 1. โหลดหน้า episode
-            // ------------------------------------------------------------
+        return try {
+
+            // 1. Load episode page
             val document = app.get(
-                url = data,
+                data,
                 headers = defaultHeaders
             ).document
 
-            // ------------------------------------------------------------
-            // 2. หา player options ทั้งหมด
-            // ------------------------------------------------------------
-            val allOptions = document.select(
+            // 2. Find player options
+            val options = document.select(
                 "ul#playeroptionsul li, li.dooplay_player_option"
             )
 
-            if (allOptions.isEmpty()) {
+            if (options.isEmpty()) {
                 return false
             }
 
-            var foundLink = false
+            var loaded = false
 
-            // ลองทุก player ไม่ใช่เลือกแค่ player 2
-            for (option in allOptions) {
+            // 3. Try every player
+            for (option in options) {
 
-                val postId = option.attr("data-post").trim()
-                val nume = option.attr("data-nume").trim()
-                val type = option.attr("data-type").trim()
+                val postId = option
+                    .attr("data-post")
+                    .trim()
 
-                if (postId.isBlank() || nume.isBlank()) {
-                    continue
-                }
+                val nume = option
+                    .attr("data-nume")
+                    .trim()
+
+                val type = option
+                    .attr("data-type")
+                    .trim()
+
+                if (postId.isBlank()) continue
+                if (nume.isBlank()) continue
 
                 try {
 
-                    // ----------------------------------------------------
-                    // 3. AJAX -> DooDee
-                    // ----------------------------------------------------
-                    val ajaxRes = app.post(
-                        url = "$mainUrl/wp-admin/admin-ajax.php",
+                    // 4. DooPlay AJAX
+                    val response = app.post(
+                        "$mainUrl/wp-admin/admin-ajax.php",
                         data = mapOf(
                             "action" to "doo_player_ajax",
                             "post" to postId,
@@ -374,42 +376,34 @@ class AnimeWakuProvider : MainAPI() {
                         ),
                         headers = defaultHeaders + mapOf(
                             "X-Requested-With" to "XMLHttpRequest",
-                            "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
                             "Origin" to mainUrl,
                             "Referer" to data
                         )
                     )
 
-                    val responseText = ajaxRes.text.trim()
+                    val body = response.text.trim()
 
-                    if (responseText.isBlank()) {
-                        continue
-                    }
+                    if (body.isBlank()) continue
 
-                    // ----------------------------------------------------
-                    // 4. DooPlay มักตอบ JSON:
-                    //    {"embed_url":"...","type":"iframe"}
-                    // ----------------------------------------------------
+                    // ------------------------------------------------
+                    // 5. Parse embed_url from JSON
+                    // ------------------------------------------------
+
                     var embedUrl: String? = null
 
                     try {
-                        val json = org.json.JSONObject(responseText)
 
-                        embedUrl = json.optString("embed_url")
-                            .takeIf { it.isNotBlank() }
-
-                    } catch (_: Exception) {
-                        // ไม่ใช่ JSON -> ลองหา iframe จาก HTML ต่อ
-                    }
-
-                    // ----------------------------------------------------
-                    // 5. fallback: response เป็น HTML / iframe
-                    // ----------------------------------------------------
-                    if (embedUrl.isNullOrBlank()) {
+                        val json = org.json.JSONObject(body)
 
                         embedUrl =
-                            org.jsoup.Jsoup
-                                .parse(responseText)
+                            json.optString("embed_url")
+                                .takeIf { it.isNotBlank() }
+
+                    } catch (_: Exception) {
+
+                        // fallback: response อาจเป็น HTML
+                        embedUrl =
+                            Jsoup.parse(body)
                                 .selectFirst("iframe")
                                 ?.attr("src")
                                 ?.trim()
@@ -419,136 +413,77 @@ class AnimeWakuProvider : MainAPI() {
                         continue
                     }
 
-                    val wrapperUrl = fixUrlNull(embedUrl)
-                        ?: continue
+                    val wrapperUrl =
+                        fixUrlNull(embedUrl)
+                            ?: continue
 
-                    // ----------------------------------------------------
-                    // 6. โหลดหน้า wrapper
-                    // ----------------------------------------------------
-                    val wrapperResponse = try {
-                        app.get(
-                            url = wrapperUrl,
-                            headers = defaultHeaders,
-                            referer = data
-                        )
-                    } catch (_: Exception) {
-                        continue
-                    }
+                    // ------------------------------------------------
+                    // 6. Load wrapper
+                    // ------------------------------------------------
 
-                    var playerHtml = wrapperResponse.text
-
-                    if (playerHtml.isBlank()) {
-                        continue
-                    }
-
-                    // ----------------------------------------------------
-                    // 7. บาง wrapper มี iframe ซ้อนอีกชั้น
-                    // ----------------------------------------------------
-                    val innerIframe = wrapperResponse.document
-                        .selectFirst("iframe")
-                        ?.attr("src")
-                        ?.trim()
-
-                    if (!innerIframe.isNullOrBlank()) {
-
-                        val innerUrl = fixUrlNull(innerIframe)
-
-                        if (innerUrl != null) {
-
-                            try {
-
-                                val innerResponse = app.get(
-                                    url = innerUrl,
-                                    headers = defaultHeaders,
-                                    referer = wrapperUrl
-                                )
-
-                                if (innerResponse.text.isNotBlank()) {
-                                    playerHtml = innerResponse.text
-                                }
-
-                            } catch (_: Exception) {
-                                // ใช้ wrapper เดิมต่อ
-                            }
-                        }
-                    }
-
-                    // ----------------------------------------------------
-                    // 8. หา URL m3u8 โดยตรงก่อน
-                    // ----------------------------------------------------
-
-                    val directM3u8 = Regex(
-                        """https?://[^"'\\\s<>]+\.m3u8[^"'\\\s<>]*"""
+                    val wrapper = app.get(
+                        wrapperUrl,
+                        headers = defaultHeaders,
+                        referer = data
                     )
-                        .find(playerHtml)
+
+                    val html = wrapper.text
+
+                    if (html.isBlank()) continue
+
+                    // ------------------------------------------------
+                    // 7. Find direct m3u8
+                    // ------------------------------------------------
+
+                    val m3u8 = Regex(
+                        """https?://[^"'\\\s]+\.m3u8[^"'\\\s]*"""
+                    )
+                        .find(html)
                         ?.value
                         ?.replace("\\/", "/")
-                        ?.replace("\\\"", "\"")
 
-                    if (!directM3u8.isNullOrBlank()) {
+                    if (!m3u8.isNullOrBlank()) {
 
                         callback.invoke(
                             newExtractorLink(
                                 source = name,
                                 name = "$name Player $nume",
-                                url = directM3u8,
+                                url = m3u8,
                                 type = ExtractorLinkType.M3U8
                             ) {
-                                this.referer = wrapperUrl
-                                this.quality = Qualities.P720.value
+
+                                quality = Qualities.P720.value
+                                referer = wrapperUrl
                             }
                         )
 
-                        foundLink = true
+                        loaded = true
                         continue
                     }
 
-                    // ----------------------------------------------------
-                    // 9. หา "file":"https://....m3u8"
-                    // ----------------------------------------------------
+                    // ------------------------------------------------
+                    // 8. Find "file":"..."
+                    // ------------------------------------------------
 
-                    val fileM3u8 = Regex(
-                        """"file"\s*:\s*"(https?://[^"]+)""""
+                    val fileUrl = Regex(
+                        """"file"\s*:\s*"(.*?)""""
                     )
-                        .find(playerHtml)
+                        .find(html)
                         ?.groupValues
                         ?.getOrNull(1)
                         ?.replace("\\/", "/")
                         ?.replace("\\u0026", "&")
 
-                    if (!fileM3u8.isNullOrBlank()) {
+                    if (!fileUrl.isNullOrBlank()) {
 
-                        callback.invoke(
-                            newExtractorLink(
-                                source = name,
-                                name = "$name Player $nume",
-                                url = fileM3u8,
-                                type = ExtractorLinkType.M3U8
-                            ) {
-                                this.referer = wrapperUrl
-                                this.quality = Qualities.P720.value
-                            }
-                        )
-
-                        foundLink = true
-                        continue
-                    }
-
-                    // ----------------------------------------------------
-                    // 10. หา source src
-                    // ----------------------------------------------------
-
-                    val sourceUrl = wrapperResponse.document
-                        .select("source[src]")
-                        .mapNotNull {
-                            fixUrlNull(it.attr("src"))
-                        }
-                        .firstOrNull()
-
-                    if (!sourceUrl.isNullOrBlank()) {
+                        val finalUrl =
+                            fixUrlNull(fileUrl)
+                                ?: continue
 
                         val linkType =
-                            if (sourceUrl.contains(".m3u8")) {
+                            if (
+                                finalUrl.contains(".m3u8")
+                            ) {
                                 ExtractorLinkType.M3U8
                             } else {
                                 ExtractorLinkType.VIDEO
@@ -558,27 +493,28 @@ class AnimeWakuProvider : MainAPI() {
                             newExtractorLink(
                                 source = name,
                                 name = "$name Player $nume",
-                                url = sourceUrl,
+                                url = finalUrl,
                                 type = linkType
                             ) {
-                                this.referer = wrapperUrl
-                                this.quality = Qualities.P720.value
+
+                                quality = Qualities.P720.value
+                                referer = wrapperUrl
                             }
                         )
 
-                        foundLink = true
+                        loaded = true
                     }
 
                 } catch (_: Exception) {
-                    // player นี้ fail -> ลอง player ถัดไป
                     continue
                 }
             }
 
-            return foundLink
+            loaded
 
         } catch (_: Exception) {
-            return false
+
+            false
         }
     }
 
