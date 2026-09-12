@@ -238,18 +238,12 @@ class AnimeWakuProvider : MainAPI() {
 
                 try {
 
-                    // 4. DooPlay AJAX
-                    val response = app.post(
-                        "$mainUrl/wp-admin/admin-ajax.php",
-                        data = mapOf(
-                            "action" to "doo_player_ajax",
-                            "post" to postId,
-                            "nume" to nume,
-                            "type" to type
-                        ),
+                    // AnimeWaku now resolves DooPlayer options through its REST API.
+                    val response = app.get(
+                        "$mainUrl/wp-json/dooplayer/v1/post/$postId" +
+                                "?type=${type.ifBlank { "tv" }}&source=$nume",
                         headers = defaultHeaders + mapOf(
-                            "X-Requested-With" to "XMLHttpRequest",
-                            "Origin" to mainUrl,
+                            "Accept" to "application/json",
                             "Referer" to data
                         )
                     )
@@ -407,7 +401,14 @@ class AnimeWakuProvider : MainAPI() {
             val url = nextUrl ?: return@repeat
             if (!visited.add(url)) return@repeat
 
-            val response = app.get(url, headers = defaultHeaders, referer = referer)
+            val response = try {
+                app.get(url, headers = defaultHeaders, referer = referer)
+            } catch (_: Exception) {
+                // Keep the URL so the registered CloudStream extractor/WebView
+                // can still resolve an iframe that rejects a plain HTTP request.
+                pages += "" to url
+                return@repeat
+            }
             pages += response.text to url
 
             val iframe = response.document
