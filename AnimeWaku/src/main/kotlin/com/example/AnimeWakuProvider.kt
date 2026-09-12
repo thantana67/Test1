@@ -218,8 +218,14 @@ class AnimeWakuProvider : MainAPI() {
             var loaded = false
             val seenPlaylistUrls = hashSetOf<String>()
 
+            // The third server is currently the most reliable one (OK.ru).
+            // Try it first so a blocked animenani player cannot delay playback.
+            val orderedOptions = options.sortedBy { option ->
+                if (option.attr("data-nume").trim() == "3") 0 else 1
+            }
+
             // 3. Try every player
-            for (option in options) {
+            for (option in orderedOptions) {
 
                 val postId = option
                     .attr("data-post")
@@ -283,6 +289,14 @@ class AnimeWakuProvider : MainAPI() {
                     val wrapperUrl =
                         fixUrlNull(embedUrl)
                             ?: continue
+
+                    // Prefer CloudStream's registered extractor for external hosts
+                    // such as ok.ru. Do this before loading the iframe page because
+                    // some hosts reject plain HTTP requests with Cloudflare.
+                    if (loadExtractor(wrapperUrl, data, subtitleCallback, callback)) {
+                        loaded = true
+                        continue
+                    }
 
                     // The hash is often inside a second iframe, not the AJAX wrapper.
                     val pages = loadPlayerPages(wrapperUrl, data)
