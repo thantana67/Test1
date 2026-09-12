@@ -3,6 +3,7 @@ package com.example
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import java.net.URLEncoder
+import java.net.URI
 import org.jsoup.Jsoup
 
 class AnimeWakuProvider : MainAPI() {
@@ -288,119 +289,49 @@ class AnimeWakuProvider : MainAPI() {
                         fixUrlNull(embedUrl)
                             ?: continue
 
-                    // ------------------------------------------------
-                    // 6. Load wrapper
-                    // ------------------------------------------------
+                    // The hash is often inside a second iframe, not the AJAX wrapper.
+                    val pages = loadPlayerPages(wrapperUrl, data)
+                    pages.forEach { (html, pageUrl) ->
+                        val normalized = html
+                            .replace("\\/", "/")
+                            .replace("\\u0026", "&")
+                            .replace("&amp;", "&")
 
-                    val wrapper = app.get(
-                        wrapperUrl,
-                        headers = defaultHeaders,
-                        referer = data
-                    )
+                        val directUrls = linkedSetOf<String>()
+                        Regex("""https?://[^"'<>\\\s]+(?:\.m3u8|\.txt|\.mp4)(?:\?[^"'<>\\\s]*)?""", RegexOption.IGNORE_CASE)
+                            .findAll(normalized)
+                            .forEach { directUrls += it.value }
+                        Regex("""["']file["']\s*:\s*["']([^"']+)["']""")
+                            .findAll(normalized)
+                            .forEach { directUrls += it.groupValues[1] }
 
-                    val html = wrapper.text
-
-                    if (html.isBlank()) continue
-
-                    // ------------------------------------------------
-                    // 7. Find direct m3u8
-                    // ------------------------------------------------
-
-                    val m3u8 = Regex(
-                        """https?://[^"'\\\s]+\.m3u8[^"'\\\s]*"""
-                    )
-                        .find(html)
-                        ?.value
-                        ?.replace("\\/", "/")
-
-                    if (!m3u8.isNullOrBlank()) {
-
-                        callback.invoke(
-                            newExtractorLink(
-                                source = name,
-                                name = "$name Player $nume",
-                                url = m3u8,
-                                type = ExtractorLinkType.M3U8
-                            ) {
-
-                                quality = Qualities.P720.value
-                                referer = wrapperUrl
-                            }
-                        )
-
-                        loaded = true
-                        continue
-                    }
-
-                    // ------------------------------------------------
-                    // 8. Find "file":"..."
-                    // ------------------------------------------------
-
-                    val fileUrl = Regex(
-                        """"file"\s*:\s*"(.*?)""""
-                    )
-                        .find(html)
-                        ?.groupValues
-                        ?.getOrNull(1)
-                        ?.replace("\\/", "/")
-                        ?.replace("\\u0026", "&")
-
-                    if (!fileUrl.isNullOrBlank()) {
-
-                        val finalUrl =
-                            fixUrlNull(fileUrl)
-                                ?: continue
-
-                        val linkType =
-                            if (
-                                finalUrl.contains(".m3u8")
-                            ) {
+                        directUrls.forEach { rawUrl ->
+                            val videoUrl = fixUrlNull(rawUrl) ?: return@forEach
+                            if (!seenPlaylistUrls.add(videoUrl)) return@forEach
+                            val linkType = if (videoUrl.contains(".m3u8") || videoUrl.contains(".txt")) {
                                 ExtractorLinkType.M3U8
                             } else {
                                 ExtractorLinkType.VIDEO
                             }
-
-                        callback.invoke(
-                            newExtractorLink(
-                                source = name,
-                                name = "$name Player $nume",
-                                url = finalUrl,
-                                type = linkType
-                            ) {
-
+                            callback.invoke(newExtractorLink(name, "$name Player $nume", videoUrl, linkType) {
                                 quality = Qualities.P720.value
-                                referer = wrapperUrl
-                            }
-                        )
-
-                        loaded = true
-                    }
-
-                    // DooDee may expose only a 32-character hash in the wrapper.
-                    val hash = Regex("""(?<![a-fA-F0-9])[a-fA-F0-9]{32}(?![a-fA-F0-9])""")
-                        .find(html)
-                        ?.value
-
-                    if (hash != null) {
-                        listOf("720", "1080", "480", "360").forEach { quality ->
-                            val playlistUrl =
-                                "https://player-ok-goal.doodee-player.com/m3u8/$hash-$quality.txt"
-
-                            if (!seenPlaylistUrls.add(playlistUrl)) return@forEach
-
-                            callback.invoke(
-                                newExtractorLink(
-                                    source = name,
-                                    name = "$name Player $nume ($quality)",
-                                    url = playlistUrl,
-                                    type = ExtractorLinkType.M3U8
-                                ) {
-                                    this.quality = quality.toInt()
-                                    referer = wrapperUrl
-                                }
-                            )
+                                referer = pageUrl
+                            })
                             loaded = true
                         }
+
+                        Regex("""(?<![a-fA-F0-9])[a-fA-F0-9]{32}(?![a-fA-F0-9])""")
+                            .find(normalized)?.value?.let { hash ->
+                                listOf("1080", "720", "480", "360").forEach { quality ->
+                                    val playlistUrl = "https://player-ok-goal.doodee-player.com/m3u8/$hash-$quality.txt"
+                                    if (!seenPlaylistUrls.add(playlistUrl)) return@forEach
+                                    callback.invoke(newExtractorLink(name, "$name Player $nume ($quality)", playlistUrl, ExtractorLinkType.M3U8) {
+                                        this.quality = quality.toInt()
+                                        referer = pageUrl
+                                    })
+                                    loaded = true
+                                }
+                            }
                     }
 
                 } catch (_: Exception) {
@@ -414,6 +345,35 @@ class AnimeWakuProvider : MainAPI() {
 
             false
         }
+    }
+
+    private suspend fun loadPlayerPages(
+        firstUrl: String,
+        episodeUrl: String
+    ): List<Pair<String, String>> {
+        val pages = mutableListOf<Pair<String, String>>()
+        val visited = hashSetOf<String>()
+        var nextUrl: String? = firstUrl
+        var referer = episodeUrl
+
+        repeat(4) {
+            val url = nextUrl ?: return@repeat
+            if (!visited.add(url)) return@repeat
+
+            val response = app.get(url, headers = defaultHeaders, referer = referer)
+            pages += response.text to url
+
+            val iframe = response.document
+                .selectFirst("iframe#embedvideo, iframe[src], iframe[data-src]")
+                ?.let { it.attr("src").ifBlank { it.attr("data-src") } }
+
+            nextUrl = iframe?.let { raw ->
+                runCatching { URI(url).resolve(raw).toString() }.getOrNull()
+                    ?: fixUrlNull(raw)
+            }
+            referer = url
+        }
+        return pages
     }
 
 }
