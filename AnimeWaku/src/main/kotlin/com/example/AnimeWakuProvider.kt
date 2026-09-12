@@ -299,10 +299,14 @@ class AnimeWakuProvider : MainAPI() {
                     // Prefer CloudStream's registered extractor for external hosts
                     // such as ok.ru. Do this before loading the iframe page because
                     // some hosts reject plain HTTP requests with Cloudflare.
-                    if (loadExtractor(extractorUrl, "$mainUrl/", subtitleCallback, callback)) {
-                        loaded = true
-                        continue
+                    val extractorCandidates = listOf(extractorUrl, wrapperUrl).distinct()
+                    for (candidateUrl in extractorCandidates) {
+                        if (loadExtractor(candidateUrl, "$mainUrl/", subtitleCallback, callback)) {
+                            loaded = true
+                            break
+                        }
                     }
+                    if (loaded) continue
 
                     // The hash is often inside a second iframe, not the AJAX wrapper.
                     val pages = loadPlayerPages(wrapperUrl, data)
