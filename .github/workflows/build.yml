@@ -38,7 +38,10 @@ jobs:
           java-version: 17
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v2
+        run: yes | sdkmanager --licenses || true
+        uses: android-actions/setup-android@v3
+        with: cmdline-tools-version: 11076708
+        
 
       - name: Build Plugins
         run: |
