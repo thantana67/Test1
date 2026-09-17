@@ -211,13 +211,7 @@ class AnimeWakuProvider : MainAPI() {
         return try {
             val document = app.get(data, headers = defaultHeaders).document
             val options = document.select("ul#playeroptionsul li, li.dooplay_player_option")
-            val directPlayerUrls = document
-                .select("iframe[src], iframe[data-src], embed[src], video[src]")
-                .mapNotNull { element ->
-                    val rawUrl = element.attr("src").ifBlank { element.attr("data-src") }.trim()
-                    fixUrlNull(rawUrl)
-                }
-                .distinct()
+            val directPlayerUrls = scrapePlayerUrls(document, data)
 
             var loaded = false
             for (playerUrl in directPlayerUrls) {
@@ -228,6 +222,30 @@ class AnimeWakuProvider : MainAPI() {
             }
 
             if (options.isEmpty()) {
+                if (loaded) return true
+
+                directPlayerUrls
+                    .filter { url ->
+                        url.contains(".m3u8", ignoreCase = true) ||
+                            url.contains(".txt", ignoreCase = true) ||
+                            url.contains(".mp4", ignoreCase = true)
+                    }
+                    .forEach { mediaUrl ->
+                        val linkType = if (mediaUrl.contains(".m3u8", ignoreCase = true) ||
+                            mediaUrl.contains(".txt", ignoreCase = true)
+                        ) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+
+                        callback(newExtractorLink(name, "$name Scraped Player", mediaUrl, linkType) {
+                            quality = Qualities.P720.value
+                            referer = data
+                            headers = mapOf(
+                                "User-Agent" to defaultHeaders["User-Agent"].orEmpty(),
+                                "Referer" to data
+                            )
+                        })
+                        loaded = true
+                    }
+
                 if (loaded) return true
 
                 val resolver = WebViewResolver(
@@ -484,6 +502,49 @@ class AnimeWakuProvider : MainAPI() {
             ?.let { it.attr("src").ifBlank { it.attr("data-src") } }
             ?.trim()
             ?.takeIf { it.isNotBlank() }
+    }
+
+    private fun scrapePlayerUrls(document: org.jsoup.nodes.Document, pageUrl: String): List<String> {
+        val candidates = linkedSetOf<String>()
+        val playerAttributes = listOf("src", "data-src", "data-url", "data-embed", "data-player", "data-link")
+
+        document.select(
+            "iframe, embed, video, source, [data-player], [data-embed], [data-src], [data-url], [data-link]"
+        ).forEach { element ->
+            playerAttributes.forEach { attribute ->
+                val rawUrl = element.attr(attribute).trim()
+                resolvePlayerUrl(rawUrl, pageUrl)?.let { candidates += it }
+            }
+        }
+
+        val normalizedHtml = document.html()
+            .replace("\\/", "/")
+            .replace("&amp;", "&")
+            .replace("\\u0026", "&")
+
+        Regex("""(?:https?:)?//[^\"'<>\\\s]+""", RegexOption.IGNORE_CASE)
+            .findAll(normalizedHtml)
+            .map { it.value }
+            .mapNotNull { resolvePlayerUrl(it, pageUrl) }
+            .filter { url ->
+                url.contains("m3u8", ignoreCase = true) ||
+                    url.contains(".mp4", ignoreCase = true) ||
+                    url.contains(".txt", ignoreCase = true) ||
+                    url.contains("embed", ignoreCase = true) ||
+                    url.contains("player", ignoreCase = true) ||
+                    url.contains("stream", ignoreCase = true)
+            }
+            .forEach { candidates += it }
+
+        return candidates.filterNot(::isBlockedPlayerUrl)
+    }
+
+    private fun resolvePlayerUrl(rawUrl: String, pageUrl: String): String? {
+        if (rawUrl.isBlank() || rawUrl.startsWith("javascript:", ignoreCase = true)) return null
+        val cleanedUrl = rawUrl.trim('"', '\'', '`')
+        return runCatching { URI(pageUrl).resolve(cleanedUrl).toString() }.getOrNull()
+            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            ?: fixUrlNull(cleanedUrl)
     }
 
 }
