@@ -196,10 +196,9 @@ class AnimeWakuProvider : MainAPI() {
         return normalized.contains("cloudflare") ||
                 normalized.contains("challenge") ||
                 normalized.contains("captcha") ||
-                normalized.contains("anime-waku.com/embed") ||
-                normalized.contains("anime-waku.com/player") ||
-                normalized.contains("nya.animenani.com") ||
-                normalized.contains("cf-challenge")
+                normalized.contains("cf-challenge") ||
+                normalized.contains("access denied") ||
+                normalized.contains("verification")
     }
 
     override suspend fun loadLinks(
@@ -252,8 +251,6 @@ class AnimeWakuProvider : MainAPI() {
                     } ?: continue
 
                     val wrapperUrl = fixUrlNull(embedUrl) ?: continue
-                    if (isBlockedPlayerUrl(wrapperUrl)) continue
-
                     val extractorUrl = if (wrapperUrl.contains("ok.ru/videoembed/")) {
                         wrapperUrl.replace("/videoembed/", "/video/")
                     } else {
@@ -264,7 +261,7 @@ class AnimeWakuProvider : MainAPI() {
 
                     val extractorCandidates = listOf(extractorUrl, wrapperUrl).distinct()
                     for (candidateUrl in extractorCandidates) {
-                        if (!isBlockedPlayerUrl(candidateUrl) && loadExtractor(candidateUrl, "$mainUrl/", subtitleCallback, callback)) {
+                        if (loadExtractor(candidateUrl, "$mainUrl/", subtitleCallback, callback)) {
                             loaded = true
                             break
                         }
@@ -304,7 +301,7 @@ class AnimeWakuProvider : MainAPI() {
                     }
 
                     if (!loaded) {
-                        val candidates = (listOf(extractorUrl, wrapperUrl) + pages.map { it.second }).distinct().filterNot { isBlockedPlayerUrl(it) }
+                        val candidates = (listOf(extractorUrl, wrapperUrl) + pages.map { it.second }).distinct()
                         for (candidateUrl in candidates) {
                             if (loadExtractor(candidateUrl, data, subtitleCallback, callback)) {
                                 loaded = true
@@ -324,9 +321,10 @@ class AnimeWakuProvider : MainAPI() {
                             timeout = 30_000L
                         )
 
-                        val candidates = (listOf(wrapperUrl) + pages.map { it.second }).distinct().filterNot { isBlockedPlayerUrl(it) }
+                        val candidates = (listOf(wrapperUrl) + pages.map { it.second }).distinct()
                         for (candidateUrl in candidates) {
                             val resolved = app.get(candidateUrl, referer = data, interceptor = resolver).url
+                            if (isBlockedPlayerUrl(resolved)) continue
                             if (!resolved.contains(".m3u8", ignoreCase = true) &&
                                 !resolved.contains(".mp4", ignoreCase = true)
                             ) continue
