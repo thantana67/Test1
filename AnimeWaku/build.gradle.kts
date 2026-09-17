@@ -3,8 +3,8 @@ dependencies {
     implementation("androidx.recyclerview:recyclerview:1.3.2")
 }
 
-// Use an integer for version numbersadad
-version = 33
+// Use an integer for version numbersadads
+version = 34
 
 cloudstream {
     description = "ANime wiTH THAI SUBS"

@@ -442,7 +442,7 @@ class AnimeWakuProvider : MainAPI() {
             val response = try {
                 app.get(url, headers = defaultHeaders, referer = referer)
             } catch (_: Exception) {
-                // Keep the URL so the registered CloudStream extractor/WebView
+                // Keep the URL so the registered CloudStream extractor/WebView            s
                 // can still resolve an iframe that rejects a plain HTTP request. test commit 31
                 pages += "" to url
                 return@repeat
