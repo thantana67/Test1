@@ -446,6 +446,63 @@ class AnimeWakuProvider : MainAPI() {
                 }
             }
 
+            if (!loaded) {
+                val episodeResolver = WebViewResolver(
+                    interceptUrl = Regex("""(?i)\.(m3u8|mp4|txt)(?:[?#]|$)"""),
+                    additionalUrls = listOf(Regex("""(?i)\.(m3u8|mp4|txt)(?:[?#]|$)""")),
+                    script = """
+                        (function () {
+                            var clicked = false;
+                            function clickPlayer() {
+                                var option = document.querySelector(
+                                    '#playeroptionsul li, li.dooplay_player_option, [data-nume], [data-post]'
+                                );
+                                if (option && !clicked) {
+                                    clicked = true;
+                                    option.click();
+                                }
+
+                                var button = document.querySelector(
+                                    'video, button, [role="button"], .jw-icon-display, .vjs-big-play-button, .vds-play-button'
+                                );
+                                if (button) button.click();
+                            }
+
+                            clickPlayer();
+                            var observer = new MutationObserver(clickPlayer);
+                            observer.observe(document.documentElement, { childList: true, subtree: true });
+                            setInterval(clickPlayer, 1000);
+                        })();
+                    """.trimIndent(),
+                    useOkhttp = false,
+                    timeout = 120_000L
+                )
+
+                val resolved = runCatching {
+                    app.get(data, referer = mainUrl, interceptor = episodeResolver).url
+                }.getOrNull()
+
+                if (!resolved.isNullOrBlank() && !isBlockedPlayerUrl(resolved) &&
+                    (resolved.contains(".m3u8", ignoreCase = true) ||
+                        resolved.contains(".mp4", ignoreCase = true) ||
+                        resolved.contains(".txt", ignoreCase = true))
+                ) {
+                    val linkType = if (resolved.contains(".m3u8", ignoreCase = true) ||
+                        resolved.contains(".txt", ignoreCase = true)
+                    ) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+
+                    callback(newExtractorLink(name, "$name Episode WebView", resolved, linkType) {
+                        quality = Qualities.P720.value
+                        referer = data
+                        headers = mapOf(
+                            "User-Agent" to defaultHeaders["User-Agent"].orEmpty(),
+                            "Referer" to data
+                        )
+                    })
+                    loaded = true
+                }
+            }
+
             loaded
         } catch (_: Exception) {
             false
