@@ -363,19 +363,15 @@ class AnimeWakuProvider : MainAPI() {
                             .replace("\\u0026", "&")
                             .replace("&amp;", "&")
 
-                        val directUrls = linkedSetOf<String>()
-                        Regex("""https?://[^"'<>\\\s]+(?:\.m3u8|\.txt|\.mp4)(?:\?[^"'<>\\\s]*)?""", RegexOption.IGNORE_CASE)
-                            .findAll(normalized)
-                            .forEach { directUrls += it.value }
-                        Regex("""["']file["']\s*:\s*["']([^"']+)["']""")
-                            .findAll(normalized)
-                            .forEach { directUrls += it.groupValues[1] }
+                        val directUrls = extractMediaUrls(normalized, pageUrl)
 
                         directUrls.forEach { rawUrl ->
                             val videoUrl = fixUrlNull(rawUrl) ?: return@forEach
                             if (isBlockedPlayerUrl(videoUrl) || !seenPlaylistUrls.add(videoUrl)) return@forEach
 
-                            val linkType = if (videoUrl.contains(".m3u8") || videoUrl.contains(".txt")) {
+                            val linkType = if (videoUrl.contains(".m3u8", ignoreCase = true) ||
+                                videoUrl.contains(".txt", ignoreCase = true)
+                            ) {
                                 ExtractorLinkType.M3U8
                             } else {
                                 ExtractorLinkType.VIDEO
@@ -573,6 +569,29 @@ class AnimeWakuProvider : MainAPI() {
             ?.let { it.attr("src").ifBlank { it.attr("data-src") } }
             ?.trim()
             ?.takeIf { it.isNotBlank() }
+    }
+
+    private fun extractMediaUrls(html: String, pageUrl: String): Set<String> {
+        val urls = linkedSetOf<String>()
+        val mediaPattern = Regex(
+            """(?:https?:)?//[^\"'<>\\\s]+|(?:/|\./|\.\./)[^\"'<>\\\s]+""",
+            RegexOption.IGNORE_CASE
+        )
+        val mediaAttributes = Regex(
+            """(?:file|src|source|hls|playlist|contentUrl)\s*[=:]\s*[\"']([^\"']+)[\"']""",
+            RegexOption.IGNORE_CASE
+        )
+
+        (mediaPattern.findAll(html).map { it.value } + mediaAttributes.findAll(html).map { it.groupValues[1] })
+            .mapNotNull { resolvePlayerUrl(it, pageUrl) }
+            .filter { url ->
+                url.contains(".m3u8", ignoreCase = true) ||
+                    url.contains(".mp4", ignoreCase = true) ||
+                    url.contains(".txt", ignoreCase = true)
+            }
+            .forEach { urls += it }
+
+        return urls
     }
 
     private fun scrapePlayerUrls(document: org.jsoup.nodes.Document, pageUrl: String): List<String> {
