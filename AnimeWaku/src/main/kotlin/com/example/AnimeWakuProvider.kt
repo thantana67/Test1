@@ -233,22 +233,33 @@ class AnimeWakuProvider : MainAPI() {
 
                 try {
                     val apiUrl = "$mainUrl/wp-json/dooplayer/v1/post/$postId?type=$type&source=$nume"
-                    val response = app.get(
-                        apiUrl,
-                        headers = defaultHeaders + mapOf(
-                            "Accept" to "application/json",
-                            "Referer" to data
-                        )
-                    )
+                    val restBody = runCatching {
+                        app.get(
+                            apiUrl,
+                            headers = defaultHeaders + mapOf(
+                                "Accept" to "application/json",
+                                "Referer" to data
+                            )
+                        ).text.trim()
+                    }.getOrDefault("")
 
-                    val body = response.text.trim()
-                    if (body.isBlank()) continue
-
-                    val embedUrl = try {
-                        org.json.JSONObject(body).optString("embed_url").trim().takeIf { it.isNotBlank() }
-                    } catch (_: Exception) {
-                        Jsoup.parse(body).selectFirst("iframe")?.attr("src")?.trim()?.takeIf { it.isNotBlank() }
-                    } ?: continue
+                    val embedUrl = extractEmbedUrl(restBody)
+                        ?: runCatching {
+                            app.post(
+                                url = "$mainUrl/wp-admin/admin-ajax.php",
+                                data = mapOf(
+                                    "action" to "doo_player_ajax",
+                                    "post" to postId,
+                                    "nume" to nume,
+                                    "type" to type
+                                ),
+                                headers = defaultHeaders + mapOf(
+                                    "X-Requested-With" to "XMLHttpRequest",
+                                    "Referer" to data
+                                )
+                            ).text.trim()
+                        }.getOrNull()?.let(::extractEmbedUrl)
+                        ?: continue
 
                     val wrapperUrl = fixUrlNull(embedUrl) ?: continue
                     val extractorUrl = if (wrapperUrl.contains("ok.ru/videoembed/")) {
@@ -312,8 +323,8 @@ class AnimeWakuProvider : MainAPI() {
 
                     if (!loaded) {
                         val resolver = WebViewResolver(
-                            interceptUrl = Regex("""(?i)\.(m3u8|mp4)(?:\?|$)"""),
-                            additionalUrls = listOf(Regex("""(?i)\.(m3u8|mp4)(?:\?|$)""")),
+                            interceptUrl = Regex("""(?i)\.(m3u8|mp4|txt)(?:\?|$)"""),
+                            additionalUrls = listOf(Regex("""(?i)\.(m3u8|mp4|txt)(?:\?|$)""")),
                             script = """
                                 document.querySelector('video,button,[role="button"],.jw-icon-display,.vjs-big-play-button,.vds-play-button')?.click();
                             """.trimIndent(),
@@ -397,6 +408,30 @@ class AnimeWakuProvider : MainAPI() {
             referer = url
         }
         return pages
+    }
+
+    private fun extractEmbedUrl(body: String): String? {
+        if (body.isBlank()) return null
+
+        val json = runCatching { org.json.JSONObject(body) }.getOrNull()
+        if (json != null) {
+            val urlKeys = listOf("embed_url", "embed", "url", "source", "link")
+            for (key in urlKeys) {
+                json.optString(key).trim().takeIf { it.isNotBlank() }?.let { return it }
+            }
+            for (key in listOf("data", "result", "player")) {
+                val nested = json.optJSONObject(key) ?: continue
+                for (urlKey in urlKeys) {
+                    nested.optString(urlKey).trim().takeIf { it.isNotBlank() }?.let { return it }
+                }
+            }
+        }
+
+        return Jsoup.parse(body)
+            .selectFirst("iframe[src], iframe[data-src]")
+            ?.let { it.attr("src").ifBlank { it.attr("data-src") } }
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
     }
 
 }
