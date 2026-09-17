@@ -1,5 +1,6 @@
 package com.example
 
+import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.network.WebViewResolver
@@ -216,8 +217,12 @@ class AnimeWakuProvider : MainAPI() {
                 headers = defaultHeaders,
                 interceptor = cloudflareKiller
             ).document
-            val options = document.select("ul#playeroptionsul li, li.dooplay_player_option")
+            val options = document.select(
+                "ul#playeroptionsul li, li.dooplay_player_option, " +
+                    "[data-post][data-nume], [data-post][data-source], [data-nume][data-type]"
+            )
             val directPlayerUrls = scrapePlayerUrls(document, data)
+            Log.d("AnimeWaku", "loadLinks page=${data.substringAfterLast('/')} options=${options.size} directUrls=${directPlayerUrls.size}")
 
             var loaded = false
             for (playerUrl in directPlayerUrls) {
@@ -228,6 +233,7 @@ class AnimeWakuProvider : MainAPI() {
             }
 
             if (options.isEmpty()) {
+                Log.w("AnimeWaku", "No DooPlayer options found for $data")
                 if (loaded) return true
 
                 directPlayerUrls
@@ -302,10 +308,13 @@ class AnimeWakuProvider : MainAPI() {
 
             for (option in orderedOptions) {
                 val postId = option.attr("data-post").trim()
-                val nume = option.attr("data-nume").trim()
+                val nume = option.attr("data-nume").trim().ifBlank { option.attr("data-source").trim() }
                 val type = option.attr("data-type").trim().ifBlank { "tv" }
 
-                if (postId.isBlank() || nume.isBlank()) continue
+                if (postId.isBlank() || nume.isBlank()) {
+                    Log.w("AnimeWaku", "Skipping player option with missing post/source")
+                    continue
+                }
 
                 try {
                     val apiUrl = "$mainUrl/wp-json/dooplayer/v1/post/$postId?type=$type&source=$nume"
@@ -319,6 +328,7 @@ class AnimeWakuProvider : MainAPI() {
                             interceptor = cloudflareKiller
                         ).text.trim()
                     }.getOrDefault("")
+                    Log.d("AnimeWaku", "REST player post=$postId source=$nume responseLength=${restBody.length}")
 
                     val embedUrl = extractEmbedUrl(restBody)
                         ?: runCatching {
@@ -336,7 +346,9 @@ class AnimeWakuProvider : MainAPI() {
                                 ),
                                 interceptor = cloudflareKiller
                             ).text.trim()
-                        }.getOrNull()?.let(::extractEmbedUrl)
+                        }.getOrNull()?.also {
+                            Log.d("AnimeWaku", "AJAX player post=$postId responseLength=${it.length}")
+                        }?.let(::extractEmbedUrl)
                         ?: continue
 
                     val wrapperUrl = fixUrlNull(embedUrl) ?: continue
@@ -437,12 +449,14 @@ class AnimeWakuProvider : MainAPI() {
                             break
                         }
                     }
-                } catch (_: Exception) {
+                } catch (error: Exception) {
+                    Log.w("AnimeWaku", "Player source failed post=$postId source=$nume: ${error.message}")
                     continue
                 }
             }
 
             if (!loaded) {
+                Log.w("AnimeWaku", "No playable link found after REST/AJAX/extractor/WebView attempts for $data")
                 val episodeResolver = WebViewResolver(
                     interceptUrl = Regex("""(?i)\.(m3u8|mp4|txt)(?:[?#]|$)"""),
                     additionalUrls = listOf(Regex("""(?i)\.(m3u8|mp4|txt)(?:[?#]|$)""")),
@@ -500,7 +514,8 @@ class AnimeWakuProvider : MainAPI() {
             }
 
             loaded
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            Log.e("AnimeWaku", "loadLinks failed for $data: ${error.message}")
             false
         }
     }
