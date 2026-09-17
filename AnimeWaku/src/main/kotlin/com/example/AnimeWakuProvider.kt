@@ -191,6 +191,17 @@ class AnimeWakuProvider : MainAPI() {
 //        )
 //    }
 
+    private fun isBlockedPlayerUrl(url: String): Boolean {
+        val normalized = url.lowercase()
+        return normalized.contains("cloudflare") ||
+                normalized.contains("challenge") ||
+                normalized.contains("captcha") ||
+                normalized.contains("anime-waku.com/embed") ||
+                normalized.contains("anime-waku.com/player") ||
+                normalized.contains("nya.animenani.com") ||
+                normalized.contains("cf-challenge")
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -199,55 +210,32 @@ class AnimeWakuProvider : MainAPI() {
     ): Boolean {
 
         return try {
-
-            // 1. Load episode page
-            val document = app.get(
-                data,
-                headers = defaultHeaders
-            ).document
-
-            // 2. Find player options
-            val options = document.select(
-                "ul#playeroptionsul li, li.dooplay_player_option"
-            )
+            val document = app.get(data, headers = defaultHeaders).document
+            val options = document.select("ul#playeroptionsul li, li.dooplay_player_option")
 
             if (options.isEmpty()) {
                 return false
             }
 
+            val orderedOptions = options.sortedBy { option ->
+                val nume = option.attr("data-nume").trim()
+                if (nume == "3") 0 else if (nume.isNotBlank()) 1 else 99
+            }
+
             var loaded = false
             val seenPlaylistUrls = hashSetOf<String>()
 
-            // The third server is currently the most reliable one (OK.ru).
-            // Try it first so a blocked animenani player cannot delay playback.
-            val orderedOptions = options.sortedBy { option ->
-                if (option.attr("data-nume").trim() == "3") 0 else 1
-            }
-
-            // 3. Try every player
             for (option in orderedOptions) {
+                val postId = option.attr("data-post").trim()
+                val nume = option.attr("data-nume").trim()
+                val type = option.attr("data-type").trim().ifBlank { "tv" }
 
-                val postId = option
-                    .attr("data-post")
-                    .trim()
-
-                val nume = option
-                    .attr("data-nume")
-                    .trim()
-
-                val type = option
-                    .attr("data-type")
-                    .trim()
-
-                if (postId.isBlank()) continue
-                if (nume.isBlank()) continue
+                if (postId.isBlank() || nume.isBlank()) continue
 
                 try {
-
-                    // AnimeWaku now resolves DooPlayer options through its REST API.
+                    val apiUrl = "$mainUrl/wp-json/dooplayer/v1/post/$postId?type=$type&source=$nume"
                     val response = app.get(
-                        "$mainUrl/wp-json/dooplayer/v1/post/$postId" +
-                                "?type=${type.ifBlank { "tv" }}&source=$nume",
+                        apiUrl,
                         headers = defaultHeaders + mapOf(
                             "Accept" to "application/json",
                             "Referer" to data
@@ -255,40 +243,16 @@ class AnimeWakuProvider : MainAPI() {
                     )
 
                     val body = response.text.trim()
-
                     if (body.isBlank()) continue
 
-                    // ------------------------------------------------
-                    // 5. Parse embed_url from JSON
-                    // ------------------------------------------------
-
-                    var embedUrl: String? = null
-
-                    try {
-
-                        val json = org.json.JSONObject(body)
-
-                        embedUrl =
-                            json.optString("embed_url")
-                                .takeIf { it.isNotBlank() }
-
+                    val embedUrl = try {
+                        org.json.JSONObject(body).optString("embed_url").trim().takeIf { it.isNotBlank() }
                     } catch (_: Exception) {
+                        Jsoup.parse(body).selectFirst("iframe")?.attr("src")?.trim()?.takeIf { it.isNotBlank() }
+                    } ?: continue
 
-                        // fallback: response อาจเป็น HTML
-                        embedUrl =
-                            Jsoup.parse(body)
-                                .selectFirst("iframe")
-                                ?.attr("src")
-                                ?.trim()
-                    }
-
-                    if (embedUrl.isNullOrBlank()) {
-                        continue
-                    }
-
-                    val wrapperUrl =
-                        fixUrlNull(embedUrl)
-                            ?: continue
+                    val wrapperUrl = fixUrlNull(embedUrl) ?: continue
+                    if (isBlockedPlayerUrl(wrapperUrl)) continue
 
                     val extractorUrl = if (wrapperUrl.contains("ok.ru/videoembed/")) {
                         wrapperUrl.replace("/videoembed/", "/video/")
@@ -296,20 +260,17 @@ class AnimeWakuProvider : MainAPI() {
                         wrapperUrl
                     }
 
-                    // Prefer CloudStream's registered extractor for external hosts
-                    // such as ok.ru. Do this before loading the iframe page because
-                    // some hosts reject plain HTTP requests with Cloudflare.
+                    val pages = loadPlayerPages(wrapperUrl, data)
+
                     val extractorCandidates = listOf(extractorUrl, wrapperUrl).distinct()
                     for (candidateUrl in extractorCandidates) {
-                        if (loadExtractor(candidateUrl, "$mainUrl/", subtitleCallback, callback)) {
+                        if (!isBlockedPlayerUrl(candidateUrl) && loadExtractor(candidateUrl, "$mainUrl/", subtitleCallback, callback)) {
                             loaded = true
                             break
                         }
                     }
                     if (loaded) continue
 
-                    // The hash is often inside a second iframe, not the AJAX wrapper.
-                    val pages = loadPlayerPages(wrapperUrl, data)
                     pages.forEach { (html, pageUrl) ->
                         val normalized = html
                             .replace("\\/", "/")
@@ -326,24 +287,24 @@ class AnimeWakuProvider : MainAPI() {
 
                         directUrls.forEach { rawUrl ->
                             val videoUrl = fixUrlNull(rawUrl) ?: return@forEach
-                            if (!seenPlaylistUrls.add(videoUrl)) return@forEach
+                            if (isBlockedPlayerUrl(videoUrl) || !seenPlaylistUrls.add(videoUrl)) return@forEach
+
                             val linkType = if (videoUrl.contains(".m3u8") || videoUrl.contains(".txt")) {
                                 ExtractorLinkType.M3U8
                             } else {
                                 ExtractorLinkType.VIDEO
                             }
+
                             callback.invoke(newExtractorLink(name, "$name Player $nume", videoUrl, linkType) {
                                 quality = Qualities.P720.value
                                 referer = pageUrl
                             })
                             loaded = true
                         }
-
                     }
 
-                    // The player may create the real stream only after JavaScript runs.
                     if (!loaded) {
-                        val candidates = (listOf(extractorUrl, wrapperUrl) + pages.map { it.second }).distinct()
+                        val candidates = (listOf(extractorUrl, wrapperUrl) + pages.map { it.second }).distinct().filterNot { isBlockedPlayerUrl(it) }
                         for (candidateUrl in candidates) {
                             if (loadExtractor(candidateUrl, data, subtitleCallback, callback)) {
                                 loaded = true
@@ -363,14 +324,9 @@ class AnimeWakuProvider : MainAPI() {
                             timeout = 30_000L
                         )
 
-                        val candidates = (listOf(wrapperUrl) + pages.map { it.second }).distinct()
+                        val candidates = (listOf(wrapperUrl) + pages.map { it.second }).distinct().filterNot { isBlockedPlayerUrl(it) }
                         for (candidateUrl in candidates) {
-                            val resolved = app.get(
-                                candidateUrl,
-                                referer = data,
-                                interceptor = resolver
-                            ).url
-
+                            val resolved = app.get(candidateUrl, referer = data, interceptor = resolver).url
                             if (!resolved.contains(".m3u8", ignoreCase = true) &&
                                 !resolved.contains(".mp4", ignoreCase = true)
                             ) continue
@@ -398,16 +354,13 @@ class AnimeWakuProvider : MainAPI() {
                             break
                         }
                     }
-
                 } catch (_: Exception) {
                     continue
                 }
             }
 
             loaded
-
         } catch (_: Exception) {
-
             false
         }
     }
