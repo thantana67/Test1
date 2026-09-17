@@ -41,6 +41,7 @@ jobs:
         uses: android-actions/setup-android@v3
         with:
           cmdline-tools-version: 11076708
+          packages: "platform-tools"
 
       - name: Accept licenses
         run: yes | sdkmanager --licenses || true
