@@ -1,0 +1,42 @@
+[
+    {
+        "iconUrl": "https://archive.org/favicon.ico",
+        "fileHash": "sha256-75eed3f96d01955cc9970b412b524473d7300f3db6d4a7725685ec6ecd35ae07",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/thantana67/Test1",
+        "fileSize": 48048,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "thantana67"
+        ],
+        "tvTypes": [
+            "Anime"
+        ],
+        "version": 51,
+        "internalName": "AnimeWaku",
+        "description": "ANime wiTH THAI SUBS",
+        "url": "https://raw.githubusercontent.com/thantana67/Test1/builds/AnimeWaku.cs3",
+        "name": "AnimeWaku"
+    },
+    {
+        "iconUrl": "https://archive.org/favicon.ico",
+        "fileHash": "sha256-ec450a389cbf8d3c6400ea6e2ade48e354cdffcf1647bbe6c20bb20b78692faf",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/thantana67/Test1",
+        "fileSize": 13279,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "thantana67"
+        ],
+        "tvTypes": [
+            "Movie"
+        ],
+        "version": 2,
+        "internalName": "ExampleProvider",
+        "description": "Public domain movies from Internet Archive",
+        "url": "https://raw.githubusercontent.com/thantana67/Test1/builds/ExampleProvider.cs3",
+        "name": "ExampleProvider"
+    }
+]
