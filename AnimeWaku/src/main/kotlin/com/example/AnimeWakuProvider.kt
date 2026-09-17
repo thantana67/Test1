@@ -211,9 +211,62 @@ class AnimeWakuProvider : MainAPI() {
         return try {
             val document = app.get(data, headers = defaultHeaders).document
             val options = document.select("ul#playeroptionsul li, li.dooplay_player_option")
+            val directPlayerUrls = document
+                .select("iframe[src], iframe[data-src], embed[src], video[src]")
+                .mapNotNull { element ->
+                    val rawUrl = element.attr("src").ifBlank { element.attr("data-src") }.trim()
+                    fixUrlNull(rawUrl)
+                }
+                .distinct()
+
+            var loaded = false
+            for (playerUrl in directPlayerUrls) {
+                if (loadExtractor(playerUrl, data, subtitleCallback, callback)) {
+                    loaded = true
+                    break
+                }
+            }
 
             if (options.isEmpty()) {
-                return false
+                if (loaded) return true
+
+                val resolver = WebViewResolver(
+                    interceptUrl = Regex("""(?i)\.(m3u8|mp4|txt)(?:\?|$)"""),
+                    additionalUrls = listOf(Regex("""(?i)\.(m3u8|mp4|txt)(?:\?|$)""")),
+                    script = """
+                        document.querySelector('video,button,[role="button"],.jw-icon-display,.vjs-big-play-button,.vds-play-button')?.click();
+                    """.trimIndent(),
+                    useOkhttp = false,
+                    timeout = 30_000L
+                )
+
+                for (playerUrl in directPlayerUrls) {
+                    val resolved = runCatching {
+                        app.get(playerUrl, referer = data, interceptor = resolver).url
+                    }.getOrNull() ?: continue
+                    if (isBlockedPlayerUrl(resolved)) continue
+                    if (!resolved.contains(".m3u8", ignoreCase = true) &&
+                        !resolved.contains(".mp4", ignoreCase = true) &&
+                        !resolved.contains(".txt", ignoreCase = true)
+                    ) continue
+
+                    val linkType = if (resolved.contains(".m3u8", ignoreCase = true) ||
+                        resolved.contains(".txt", ignoreCase = true)
+                    ) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+
+                    callback(newExtractorLink(name, "$name Direct Player", resolved, linkType) {
+                        quality = Qualities.P720.value
+                        referer = playerUrl
+                        headers = mapOf(
+                            "User-Agent" to defaultHeaders["User-Agent"].orEmpty(),
+                            "Referer" to playerUrl
+                        )
+                    })
+                    loaded = true
+                    break
+                }
+
+                return loaded
             }
 
             val orderedOptions = options.sortedBy { option ->
@@ -221,7 +274,6 @@ class AnimeWakuProvider : MainAPI() {
                 if (nume == "3") 0 else if (nume.isNotBlank()) 1 else 99
             }
 
-            var loaded = false
             val seenPlaylistUrls = hashSetOf<String>()
 
             for (option in orderedOptions) {
