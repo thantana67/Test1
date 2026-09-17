@@ -11,7 +11,7 @@ cloudstream {
     authors = listOf("thantana67")
     status = 1
     tvTypes = listOf("Anime")
-    requiresResources = false  // เพราะไม่ได้ใช้ BlankFragment/UI พิเศษ
+    requiresResources = false  // เพราะไม่ได้ใช้ BlankFragment/UI พิเศษ s
     language = "en"
     iconUrl = "https://archive.org/favicon.ico"
 }

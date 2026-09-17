@@ -382,7 +382,7 @@ class AnimeWakuProvider : MainAPI() {
                 app.get(url, headers = defaultHeaders, referer = referer)
             } catch (_: Exception) {
                 // Keep the URL so the registered CloudStream extractor/WebView
-                // can still resolve an iframe that rejects a plain HTTP request. s
+                // can still resolve an iframe that rejects a plain HTTP request. ss
                 pages += "" to url
                 return@repeat
             }
