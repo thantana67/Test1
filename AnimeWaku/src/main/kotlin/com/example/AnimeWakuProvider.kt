@@ -412,8 +412,8 @@ class AnimeWakuProvider : MainAPI() {
 
                     if (!loaded) {
                         val resolver = WebViewResolver(
-                            interceptUrl = Regex("""(?i)\.(m3u8|mp4|txt)(?:[?#]|$)"""),
-                            additionalUrls = listOf(Regex("""(?i)\.(m3u8|mp4|txt)(?:[?#]|$)""")),
+                            interceptUrl = mediaRequestRegex,
+                            additionalUrls = listOf(mediaRequestRegex),
                             script = playerResolverScript,
                             useOkhttp = false,
                             timeout = 120_000L
@@ -427,11 +427,11 @@ class AnimeWakuProvider : MainAPI() {
                                 Log.w("AnimeWaku", "WebView failed url=${candidateUrl.take(200)} error=${error.message}")
                             }.getOrNull() ?: continue
                             if (isBlockedPlayerUrl(resolved)) continue
-                            if (!resolved.contains(".m3u8", ignoreCase = true) &&
-                                !resolved.contains(".mp4", ignoreCase = true)
-                            ) continue
+                            if (!isLikelyMediaUrl(resolved)) continue
 
-                            val linkType = if (resolved.contains(".m3u8", ignoreCase = true)) {
+                            val linkType = if (resolved.contains(".m3u8", ignoreCase = true) ||
+                                resolved.contains(".txt", ignoreCase = true)
+                            ) {
                                 ExtractorLinkType.M3U8
                             } else {
                                 ExtractorLinkType.VIDEO
@@ -555,6 +555,13 @@ class AnimeWakuProvider : MainAPI() {
                 return@repeat
             }
             pages += response.text to url
+            val pageText = response.text
+            Log.d(
+                "AnimeWaku",
+                "Player HTML url=${url.take(180)} length=${pageText.length} " +
+                    "title=${response.document.title().take(80)} " +
+                    "challenge=${isBlockedPlayerUrl(pageText)}"
+            )
 
             val iframe = response.document
                 .selectFirst("iframe#embedvideo, iframe[src], iframe[data-src]")
@@ -689,7 +696,8 @@ class AnimeWakuProvider : MainAPI() {
 
                 for (var i = 0; i < values.length; i++) {
                     var value = values[i];
-                    if (value && /\.(m3u8|mp4|txt)([?#]|$)/i.test(value)) return value;
+                    if (value && (/\.(m3u8|mp4|txt)([?#]|$)/i.test(value) ||
+                        /\/(stream|video|play|source|media)([\/?#]|$)/i.test(value))) return value;
                 }
                 return null;
             }
@@ -720,6 +728,17 @@ class AnimeWakuProvider : MainAPI() {
             setInterval(inspectMedia, 1000);
         })();
     """.trimIndent()
+
+    private val mediaRequestRegex = Regex(
+        """(?i)(?:\.(m3u8|mp4|txt)(?:[?#]|$)|/(stream|video|play|source|media)(?:[/?#]|$)|(?:stream|video|play|source|media)=)"""
+    )
+
+    private fun isLikelyMediaUrl(url: String): Boolean {
+        return url.contains(".m3u8", ignoreCase = true) ||
+            url.contains(".mp4", ignoreCase = true) ||
+            url.contains(".txt", ignoreCase = true) ||
+            mediaRequestRegex.containsMatchIn(url)
+    }
 
     private fun resolvePlayerUrl(rawUrl: String, pageUrl: String): String? {
         if (rawUrl.isBlank() || rawUrl.startsWith("javascript:", ignoreCase = true)) return null
