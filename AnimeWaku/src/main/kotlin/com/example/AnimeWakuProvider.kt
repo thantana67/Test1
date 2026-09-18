@@ -329,6 +329,7 @@ class AnimeWakuProvider : MainAPI() {
                         ).text.trim()
                     }.getOrDefault("")
                     Log.d("AnimeWaku", "REST player post=$postId source=$nume responseLength=${restBody.length}")
+                    Log.d("AnimeWaku", "REST body=${restBody.take(300)}")
 
                     val embedUrl = extractEmbedUrl(restBody)
                         ?: runCatching {
@@ -352,6 +353,7 @@ class AnimeWakuProvider : MainAPI() {
                         ?: continue
 
                     val wrapperUrl = fixUrlNull(embedUrl) ?: continue
+                    Log.d("AnimeWaku", "Embed URL=${wrapperUrl.take(300)}")
                     val extractorUrl = if (wrapperUrl.contains("ok.ru/videoembed/")) {
                         wrapperUrl.replace("/videoembed/", "/video/")
                     } else {
@@ -359,6 +361,7 @@ class AnimeWakuProvider : MainAPI() {
                     }
 
                     val pages = loadPlayerPages(wrapperUrl, data, cloudflareKiller)
+                    Log.d("AnimeWaku", "Player pages=${pages.size} urls=${pages.map { it.second }.joinToString().take(500)}")
 
                     val extractorCandidates = listOf(extractorUrl, wrapperUrl).distinct()
                     for (candidateUrl in extractorCandidates) {
@@ -420,7 +423,11 @@ class AnimeWakuProvider : MainAPI() {
 
                         val candidates = (listOf(wrapperUrl) + pages.map { it.second }).distinct()
                         for (candidateUrl in candidates) {
-                            val resolved = app.get(candidateUrl, referer = data, interceptor = resolver).url
+                            val resolved = runCatching {
+                                app.get(candidateUrl, referer = data, interceptor = resolver).url
+                            }.onFailure { error ->
+                                Log.w("AnimeWaku", "WebView failed url=${candidateUrl.take(200)} error=${error.message}")
+                            }.getOrNull() ?: continue
                             if (isBlockedPlayerUrl(resolved)) continue
                             if (!resolved.contains(".m3u8", ignoreCase = true) &&
                                 !resolved.contains(".mp4", ignoreCase = true)
@@ -490,7 +497,9 @@ class AnimeWakuProvider : MainAPI() {
 
                 val resolved = runCatching {
                     app.get(data, referer = mainUrl, interceptor = episodeResolver).url
-                }.getOrNull()
+                        }.onFailure { error ->
+                            Log.w("AnimeWaku", "Episode WebView failed error=${error.message}")
+                        }.getOrNull()
 
                 if (!resolved.isNullOrBlank() && !isBlockedPlayerUrl(resolved) &&
                     (resolved.contains(".m3u8", ignoreCase = true) ||
