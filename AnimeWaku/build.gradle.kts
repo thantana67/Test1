@@ -4,7 +4,7 @@ dependencies {
 }
 
 // Use an integer for version numbersadads
-version = 41
+version = 42
 
 cloudstream {
     description = "ANime wiTH THAI SUBS"
@@ -19,3 +19,7 @@ cloudstream {
 android {
     namespace = "com.example"
 }
+
+// git add AnimeWaku/build.gradle.kts
+// git add AnimeWaku/src/main/kotlin/com/example/AnimeWakuProvider.kt
+// git commit -m "solve test"

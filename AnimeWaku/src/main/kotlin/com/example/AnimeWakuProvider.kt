@@ -412,13 +412,11 @@ class AnimeWakuProvider : MainAPI() {
 
                     if (!loaded) {
                         val resolver = WebViewResolver(
-                            interceptUrl = Regex("""(?i)\.(m3u8|mp4|txt)(?:\?|$)"""),
-                            additionalUrls = listOf(Regex("""(?i)\.(m3u8|mp4|txt)(?:\?|$)""")),
-                            script = """
-                                document.querySelector('video,button,[role="button"],.jw-icon-display,.vjs-big-play-button,.vds-play-button')?.click();
-                            """.trimIndent(),
+                            interceptUrl = Regex("""(?i)\.(m3u8|mp4|txt)(?:[?#]|$)"""),
+                            additionalUrls = listOf(Regex("""(?i)\.(m3u8|mp4|txt)(?:[?#]|$)""")),
+                            script = playerResolverScript,
                             useOkhttp = false,
-                            timeout = 30_000L
+                            timeout = 120_000L
                         )
 
                         val candidates = (listOf(wrapperUrl) + pages.map { it.second }).distinct()
@@ -652,6 +650,54 @@ class AnimeWakuProvider : MainAPI() {
 
         return candidates.filterNot(::isBlockedPlayerUrl)
     }
+
+    private val playerResolverScript = """
+        (function () {
+            if (window.__animeWakuResolverStarted) return;
+            window.__animeWakuResolverStarted = true;
+
+            function activate(element) {
+                if (!element) return;
+                try { element.click(); } catch (ignored) {}
+                try {
+                    if (element.play) element.play().catch(function () {});
+                } catch (ignored) {}
+            }
+
+            function activatePlayers(root) {
+                var selectors = [
+                    'video', 'audio', 'button', '[role="button"]',
+                    '.jw-icon-display', '.jw-video', '.vjs-big-play-button',
+                    '.vjs-play-control', '.plyr__control--overlaid',
+                    '.vds-play-button', '[onclick]',
+                    'iframe[src]', 'iframe[data-src]'
+                ];
+                selectors.forEach(function (selector) {
+                    try {
+                        root.querySelectorAll(selector).forEach(activate);
+                    } catch (ignored) {}
+                });
+            }
+
+            function inspectMedia() {
+                activatePlayers(document);
+                document.querySelectorAll('iframe[src], iframe[data-src]').forEach(function (frame) {
+                    try {
+                        var source = frame.src || frame.getAttribute('data-src');
+                        if (source && source !== location.href) frame.contentWindow.postMessage('play', '*');
+                    } catch (ignored) {}
+                });
+            }
+
+            inspectMedia();
+            new MutationObserver(inspectMedia).observe(document.documentElement, {
+                childList: true,
+                subtree: true,
+                attributes: true
+            });
+            setInterval(inspectMedia, 1000);
+        })();
+    """.trimIndent()
 
     private fun resolvePlayerUrl(rawUrl: String, pageUrl: String): String? {
         if (rawUrl.isBlank() || rawUrl.startsWith("javascript:", ignoreCase = true)) return null
