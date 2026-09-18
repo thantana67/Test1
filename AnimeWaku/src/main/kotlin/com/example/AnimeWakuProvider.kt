@@ -679,11 +679,33 @@ class AnimeWakuProvider : MainAPI() {
                 });
             }
 
+            function mediaUrl(root) {
+                var media = root.querySelector('video, audio');
+                var sources = root.querySelectorAll('video source, audio source');
+                var values = [];
+                if (media) values.push(media.currentSrc, media.src);
+                sources.forEach(function (source) { values.push(source.src, source.getAttribute('src')); });
+                values.push(root.querySelector('[data-src]')?.getAttribute('data-src'));
+
+                for (var i = 0; i < values.length; i++) {
+                    var value = values[i];
+                    if (value && /\.(m3u8|mp4|txt)([?#]|$)/i.test(value)) return value;
+                }
+                return null;
+            }
+
             function inspectMedia() {
                 activatePlayers(document);
+                var media = mediaUrl(document);
+                if (media && media !== location.href) {
+                    location.href = media;
+                    return;
+                }
+
                 document.querySelectorAll('iframe[src], iframe[data-src]').forEach(function (frame) {
                     try {
                         var source = frame.src || frame.getAttribute('data-src');
+                        if (!frame.src && source) frame.src = source;
                         if (source && source !== location.href) frame.contentWindow.postMessage('play', '*');
                     } catch (ignored) {}
                 });
