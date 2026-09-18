@@ -416,6 +416,7 @@ class AnimeWakuProvider : MainAPI() {
                             additionalUrls = listOf(mediaRequestRegex),
                             script = playerResolverScript,
                             useOkhttp = false,
+                            userAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/131.0.0.0 Mobile Safari/537.36",
                             timeout = 120_000L
                         )
 
@@ -713,6 +714,17 @@ class AnimeWakuProvider : MainAPI() {
                         document.querySelectorAll(selector).forEach(activate);
                     } catch (ignored) {}
                 });
+
+                var title = (document.title || '').toLowerCase();
+                var text = (document.body && document.body.innerText || '').toLowerCase();
+                var waiting = title.indexOf('just a moment') >= 0 ||
+                    text.indexOf('checking your browser') >= 0 ||
+                    text.indexOf('verify you are human') >= 0 ||
+                    text.indexOf('performing security verification') >= 0;
+                if (waiting && !window.__animeWakuChallengeReloaded) {
+                    window.__animeWakuChallengeReloaded = true;
+                    setTimeout(function () { location.reload(); }, 7000);
+                }
             }
 
             function mediaUrl(root) {
