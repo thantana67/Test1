@@ -556,11 +556,27 @@ class AnimeWakuProvider : MainAPI() {
             }
             pages += response.text to url
             val pageText = response.text
+            val markers = Regex(
+                """(?i)(cloudflare|turnstile|captcha|challenge|verification|iframe|m3u8|mp4|source|video|fetch\s*\()"""
+            ).findAll(pageText)
+                .map { it.value.lowercase() }
+                .distinct()
+                .joinToString(",")
+            val scriptUrls = response.document.select("script[src]")
+                .map { it.attr("src") }
+                .filter { it.isNotBlank() }
+                .joinToString(",")
+                .take(500)
+            val frameUrls = response.document.select("iframe[src], iframe[data-src]")
+                .map { it.attr("src").ifBlank { it.attr("data-src") } }
+                .filter { it.isNotBlank() }
+                .joinToString(",")
+                .take(500)
             Log.d(
                 "AnimeWaku",
                 "Player HTML url=${url.take(180)} length=${pageText.length} " +
                     "title=${response.document.title().take(80)} " +
-                    "challenge=${isBlockedPlayerUrl(pageText)}"
+                    "markers=$markers scripts=$scriptUrls frames=$frameUrls"
             )
 
             val iframe = response.document
@@ -686,6 +702,19 @@ class AnimeWakuProvider : MainAPI() {
                 });
             }
 
+            function activateChallenge() {
+                var challengeSelectors = [
+                    '#challenge-stage button', '#challenge-stage input',
+                    '#turnstile-wrapper button', '[name="cf-turnstile"]',
+                    'iframe[title*="challenge"]', 'iframe[title*="verify"]'
+                ];
+                challengeSelectors.forEach(function (selector) {
+                    try {
+                        document.querySelectorAll(selector).forEach(activate);
+                    } catch (ignored) {}
+                });
+            }
+
             function mediaUrl(root) {
                 var media = root.querySelector('video, audio');
                 var sources = root.querySelectorAll('video source, audio source');
@@ -703,6 +732,7 @@ class AnimeWakuProvider : MainAPI() {
             }
 
             function inspectMedia() {
+                activateChallenge();
                 activatePlayers(document);
                 var media = mediaUrl(document);
                 if (media && media !== location.href) {
