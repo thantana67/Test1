@@ -479,6 +479,36 @@ class AnimeWakuProvider : MainAPI() {
                                     loaded = true
                                     break
                                 }
+
+                                val doodeeResolver = WebViewResolver(
+                                    interceptUrl = doodeeMediaRegex,
+                                    additionalUrls = listOf(doodeeMediaRegex),
+                                    script = doodeePlayerScript,
+                                    useOkhttp = false,
+                                    userAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/131.0.0.0 Mobile Safari/537.36",
+                                    timeout = 120_000L
+                                )
+                                val mediaUrl = runCatching {
+                                    app.get(resolved, referer = candidateUrl, interceptor = doodeeResolver).url
+                                }.onFailure { error ->
+                                    Log.w("AnimeWaku", "Player 2 media WebView failed error=${error.message}")
+                                }.getOrNull()
+
+                                if (!mediaUrl.isNullOrBlank() && !isBlockedPlayerUrl(mediaUrl) &&
+                                    doodeeMediaRegex.containsMatchIn(mediaUrl)
+                                ) {
+                                    callback.invoke(newExtractorLink(name, "${name} Player 2 (OK.ru)", mediaUrl, ExtractorLinkType.M3U8) {
+                                        quality = Qualities.P720.value
+                                        referer = "https://private-okru.doodee-player.com/"
+                                        headers = mapOf(
+                                            "User-Agent" to defaultHeaders["User-Agent"].orEmpty(),
+                                            "Referer" to "https://private-okru.doodee-player.com/"
+                                        )
+                                    })
+                                    Log.d("AnimeWaku", "Player 2 HLS source=$nume url=${mediaUrl.take(300)}")
+                                    loaded = true
+                                    break
+                                }
                                 continue
                             }
                             if (!isLikelyMediaUrl(resolved)) continue
@@ -828,6 +858,25 @@ class AnimeWakuProvider : MainAPI() {
     private val secondPlayerUrlRegex = Regex(
         """(?i)https?://[^\"'<>\\s]*doodee-player\.com[^\"'<>\\s]*"""
     )
+
+    private val doodeeMediaRegex = Regex(
+        """(?i)(?:player-ok-goal\.doodee-player\.com/(?:hls|m3u8)/|\.(?:m3u8|txt)(?:[?#]|$))"""
+    )
+
+    private val doodeePlayerScript = """
+        (function () {
+            function play() {
+                document.querySelectorAll('video,button,[role="button"],.jw-icon-display,.jw-display-icon-container')
+                    .forEach(function (element) {
+                        try { element.click(); } catch (ignored) {}
+                        try { if (element.play) element.play().catch(function () {}); } catch (ignored) {}
+                    });
+            }
+            play();
+            new MutationObserver(play).observe(document.documentElement, { childList: true, subtree: true });
+            setInterval(play, 1000);
+        })();
+    """.trimIndent()
 
     private val secondPlayerResolverScript = """
         (function () {
