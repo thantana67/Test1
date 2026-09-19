@@ -456,8 +456,8 @@ class AnimeWakuProvider : MainAPI() {
 
                     if (!loaded) {
                         val secondPlayerResolver = WebViewResolver(
-                            interceptUrl = mediaRequestRegex,
-                            additionalUrls = listOf(mediaRequestRegex),
+                            interceptUrl = secondPlayerUrlRegex,
+                            additionalUrls = listOf(secondPlayerUrlRegex),
                             script = secondPlayerResolverScript,
                             useOkhttp = false,
                             userAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/131.0.0.0 Mobile Safari/537.36",
@@ -471,6 +471,16 @@ class AnimeWakuProvider : MainAPI() {
                                 Log.w("AnimeWaku", "Player 2 WebView failed url=${candidateUrl.take(200)} error=${error.message}")
                             }.getOrNull() ?: continue
                             if (isBlockedPlayerUrl(resolved) || isUnsupportedImageHls(resolved)) continue
+
+                            if (resolved.contains("doodee-player.com", ignoreCase = true)) {
+                                Log.d("AnimeWaku", "Player 2 iframe discovered source=$nume url=${resolved.take(300)}")
+                                if (loadExtractor(resolved, candidateUrl, subtitleCallback, callback)) {
+                                    Log.d("AnimeWaku", "Player 2 extractor loaded source=$nume")
+                                    loaded = true
+                                    break
+                                }
+                                continue
+                            }
                             if (!isLikelyMediaUrl(resolved)) continue
 
                             val linkType = mediaLinkType(resolved)
@@ -813,6 +823,10 @@ class AnimeWakuProvider : MainAPI() {
 
     private val mediaRequestRegex = Regex(
         """(?i)(?:\.(m3u8|mp4|txt)(?:[?#]|$)|/(stream|video|play|source|media)(?:[/?#]|$)|/o/[^/?#]+/v/[^?#]+|(?:stream|video|play|source|media)=)"""
+    )
+
+    private val secondPlayerUrlRegex = Regex(
+        """(?i)https?://[^\"'<>\\s]*doodee-player\.com[^\"'<>\\s]*"""
     )
 
     private val secondPlayerResolverScript = """
