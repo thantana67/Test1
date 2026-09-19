@@ -630,11 +630,7 @@ class AnimeWakuProvider : MainAPI() {
 
         (mediaPattern.findAll(html).map { it.value } + mediaAttributes.findAll(html).map { it.groupValues[1] })
             .mapNotNull { resolvePlayerUrl(it, pageUrl) }
-            .filter { url ->
-                url.contains(".m3u8", ignoreCase = true) ||
-                    url.contains(".mp4", ignoreCase = true) ||
-                    url.contains(".txt", ignoreCase = true)
-            }
+            .filter(::isLikelyMediaUrl)
             .forEach { urls += it }
 
         return urls
@@ -668,6 +664,7 @@ class AnimeWakuProvider : MainAPI() {
                     url.contains(".txt", ignoreCase = true) ||
                     url.contains("embed", ignoreCase = true) ||
                     url.contains("player", ignoreCase = true) ||
+                    url.contains("playervk", ignoreCase = true) ||
                     url.contains("stream", ignoreCase = true)
             }
             .forEach { candidates += it }
