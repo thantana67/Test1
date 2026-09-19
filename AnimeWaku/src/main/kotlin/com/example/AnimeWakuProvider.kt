@@ -418,14 +418,20 @@ class AnimeWakuProvider : MainAPI() {
                         }
                     }
 
-                    if (!loaded) {
+                    val playerHasChallenge = pages.any { (html, _) ->
+                        html.contains("cloudflare", ignoreCase = true) ||
+                            html.contains("challenge", ignoreCase = true) ||
+                            html.contains("just a moment", ignoreCase = true)
+                    }
+
+                    if (!loaded && !playerHasChallenge) {
                         val resolver = WebViewResolver(
                             interceptUrl = mediaRequestRegex,
                             additionalUrls = listOf(mediaRequestRegex),
                             script = playerResolverScript,
                             useOkhttp = false,
                             userAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/131.0.0.0 Mobile Safari/537.36",
-                            timeout = 120_000L
+                            timeout = 20_000L
                         )
 
                         val candidates = (listOf(wrapperUrl) + pageCandidates).distinct()
@@ -471,7 +477,7 @@ class AnimeWakuProvider : MainAPI() {
                             script = secondPlayerResolverScript,
                             useOkhttp = false,
                             userAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/131.0.0.0 Mobile Safari/537.36",
-                            timeout = 120_000L
+                            timeout = 30_000L
                         )
 
                         for (candidateUrl in listOf(wrapperUrl).distinct()) {
