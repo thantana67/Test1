@@ -46,11 +46,48 @@ class AnimeWakuProvider : MainAPI() {
     }
     override suspend fun search(query: String): List<SearchResponse> {
         return try {
-            val url = "$mainUrl/?s=${URLEncoder.encode(query, "UTF-8")}"
+            val encodedQuery = URLEncoder.encode(query, "UTF-8")
+            val apiUrl = "$mainUrl/wp-json/wp/v2/search?search=$encodedQuery&per_page=30"
+            val apiResults = runCatching {
+                val body = app.get(
+                    apiUrl,
+                    headers = defaultHeaders + mapOf("Accept" to "application/json")
+                ).text
+                parseWordPressSearch(body)
+            }.getOrDefault(emptyList())
+
+            if (apiResults.isNotEmpty()) return apiResults
+
+            val catalogUrl = "$mainUrl/anime/?get=anime&s=$encodedQuery"
+            val catalogResults = runCatching {
+                parseAnimeLinks(app.get(catalogUrl, headers = defaultHeaders).document)
+            }.getOrDefault(emptyList())
+            if (catalogResults.isNotEmpty()) return catalogResults
+
+            val url = "$mainUrl/?s=$encodedQuery"
             parseAnimeLinks(app.get(url, headers = defaultHeaders).document)
         } catch (_: Exception) {
             emptyList()
         }
+    }
+
+    private fun parseWordPressSearch(body: String): List<SearchResponse> {
+        val json = runCatching { org.json.JSONArray(body) }.getOrNull() ?: return emptyList()
+        val results = mutableListOf<SearchResponse>()
+        val seen = hashSetOf<String>()
+
+        for (index in 0 until json.length()) {
+            val item = json.optJSONObject(index) ?: continue
+            val url = fixUrlNull(item.optString("url")) ?: continue
+            if (!url.contains("/anime/", ignoreCase = true) || !seen.add(url)) continue
+            val title = Jsoup.parse(item.optString("title")).text().trim()
+            if (title.isBlank()) continue
+            val poster = findPoster(url)
+            results += newAnimeSearchResponse(title, url, TvType.Anime) {
+                posterUrl = poster
+            }
+        }
+        return results
     }
 
     private fun parseAnimeLinks(document: org.jsoup.nodes.Document): List<SearchResponse> {
@@ -63,12 +100,9 @@ class AnimeWakuProvider : MainAPI() {
                 element.selectFirst("img")?.attr("alt")?.trim().orEmpty()
             }.replace(Regex("\\s+"), " ").trim()
             if (title.isBlank()) return@forEach
-            val image = element.selectFirst("img")
-            val poster = fixUrlNull(
-                listOf("data-lazy-src", "data-src", "data-original", "src")
-                    .asSequence().map { image?.attr(it).orEmpty() }
-                    .firstOrNull { it.isNotBlank() }
-            )
+            val poster = element.closest("article, .item, .post")
+                ?.let(::findPoster)
+                ?: findPoster(href)
             results += newAnimeSearchResponse(title, href, TvType.Anime) { posterUrl = poster }
         }
         return results
@@ -77,10 +111,7 @@ class AnimeWakuProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url, headers = defaultHeaders).document
         val title = document.selectFirst("h1")?.text()?.trim() ?: "Unknown"
-        val image = document.selectFirst(".poster img, .entry-content img, img")
-        val poster = fixUrlNull(image?.attr("data-lazy-src")?.takeIf { it.isNotBlank() }
-            ?: image?.attr("data-src")?.takeIf { it.isNotBlank() }
-            ?: image?.attr("src"))
+        val poster = findPoster(url, document)
         val subEpisodes = mutableListOf<Episode>()
         val dubEpisodes = mutableListOf<Episode>()
         val seen = hashSetOf<String>()
@@ -105,6 +136,43 @@ class AnimeWakuProvider : MainAPI() {
             if (subEpisodes.isNotEmpty()) addEpisodes(DubStatus.Subbed, subEpisodes.sortedBy { it.episode })
             if (dubEpisodes.isNotEmpty()) addEpisodes(DubStatus.Dubbed, dubEpisodes.sortedBy { it.episode })
         }
+    }
+
+    private fun findPoster(url: String, document: org.jsoup.nodes.Document? = null): String? {
+        val doc = document ?: runCatching { app.get(url, headers = defaultHeaders).document }.getOrNull()
+            ?: return null
+        val image = doc.select(
+            """
+            .poster img, .thumb img, .thumbnail img, .poster, 
+            article img, .item img, .post img, 
+            meta[property=og:image], meta[name=twitter:image]
+            """.trimIndent()
+        ).mapNotNull { element ->
+            val raw = if (element.tagName() == "meta") element.attr("content")
+            else listOf("data-lazy-src", "data-src", "data-original", "src", "content")
+                .asSequence().map { element.attr(it) }.firstOrNull { it.isNotBlank() }.orEmpty()
+            fixUrlNull(raw)?.takeUnless(::isBadPoster)
+        }.firstOrNull()
+        return image
+    }
+
+    private fun findPoster(element: org.jsoup.nodes.Element): String? {
+        val image = element.select("img, meta[property=og:image], meta[name=twitter:image]")
+            .mapNotNull { imageElement ->
+                val raw = if (imageElement.tagName() == "meta") imageElement.attr("content")
+                else listOf("data-lazy-src", "data-src", "data-original", "src")
+                    .asSequence().map { imageElement.attr(it) }.firstOrNull { it.isNotBlank() }.orEmpty()
+                fixUrlNull(raw)?.takeUnless(::isBadPoster)
+            }.firstOrNull()
+        return image
+    }
+
+    private fun isBadPoster(url: String): Boolean {
+        val value = url.lowercase()
+        return value.contains("/ads/") || value.contains("/ad/") ||
+            value.contains("banner") || value.contains("logo") ||
+            value.contains("favicon") || value.contains("placeholder") ||
+            value.contains("avatar") || value.endsWith(".gif")
     }
 //        subtitleCallback: (SubtitleFile) -> Unit,
 //        callback: (ExtractorLink) -> Unit
