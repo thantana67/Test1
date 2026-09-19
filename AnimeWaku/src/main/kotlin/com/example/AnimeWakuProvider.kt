@@ -361,11 +361,13 @@ class AnimeWakuProvider : MainAPI() {
                     }
 
                     val pages = loadPlayerPages(wrapperUrl, data, cloudflareKiller)
-                    Log.d("AnimeWaku", "Player pages=${pages.size} urls=${pages.map { it.second }.joinToString().take(500)}")
+                    val pageCandidates = pages.map { it.second }
+                    Log.d("AnimeWaku", "Player pages=${pages.size} urls=${pageCandidates.joinToString().take(500)}")
 
                     val extractorCandidates = listOf(extractorUrl, wrapperUrl).distinct()
                     for (candidateUrl in extractorCandidates) {
                         if (loadExtractor(candidateUrl, "$mainUrl/", subtitleCallback, callback)) {
+                            Log.d("AnimeWaku", "Extractor loaded source=$nume url=${candidateUrl.take(300)}")
                             loaded = true
                             break
                         }
@@ -396,14 +398,16 @@ class AnimeWakuProvider : MainAPI() {
                                 quality = Qualities.P720.value
                                 referer = pageUrl
                             })
+                            Log.d("AnimeWaku", "Direct media source=$nume type=$linkType url=${videoUrl.take(300)} referer=${pageUrl.take(200)}")
                             loaded = true
                         }
                     }
 
                     if (!loaded) {
-                        val candidates = (listOf(extractorUrl, wrapperUrl) + pages.map { it.second }).distinct()
+                        val candidates = (listOf(extractorUrl, wrapperUrl) + pageCandidates).distinct()
                         for (candidateUrl in candidates) {
                             if (loadExtractor(candidateUrl, data, subtitleCallback, callback)) {
+                                Log.d("AnimeWaku", "Nested extractor loaded source=$nume url=${candidateUrl.take(300)}")
                                 loaded = true
                                 break
                             }
@@ -420,7 +424,7 @@ class AnimeWakuProvider : MainAPI() {
                             timeout = 120_000L
                         )
 
-                        val candidates = (listOf(wrapperUrl) + pages.map { it.second }).distinct()
+                        val candidates = (listOf(wrapperUrl) + pageCandidates).distinct()
                         for (candidateUrl in candidates) {
                             val resolved = runCatching {
                                 app.get(candidateUrl, referer = data, interceptor = resolver).url
@@ -451,6 +455,7 @@ class AnimeWakuProvider : MainAPI() {
                                     "Referer" to candidateUrl
                                 )
                             })
+                            Log.d("AnimeWaku", "WebView media source=$nume type=$linkType url=${resolved.take(300)} referer=${candidateUrl.take(200)}")
                             loaded = true
                             break
                         }
@@ -535,25 +540,25 @@ class AnimeWakuProvider : MainAPI() {
     ): List<Pair<String, String>> {
         val pages = mutableListOf<Pair<String, String>>()
         val visited = hashSetOf<String>()
-        var nextUrl: String? = firstUrl
-        var referer = episodeUrl
+        val pendingUrls = mutableListOf(firstUrl)
+        var pendingIndex = 0
 
-        repeat(4) {
-            val url = nextUrl ?: return@repeat
-            if (!visited.add(url)) return@repeat
+        while (pendingIndex < pendingUrls.size && pendingIndex < 8) {
+            val url = pendingUrls[pendingIndex++]
+            if (!visited.add(url)) continue
 
             val response = try {
                 app.get(
                     url,
                     headers = defaultHeaders,
-                    referer = referer,
+                    referer = if (url == firstUrl) episodeUrl else firstUrl,
                     interceptor = cloudflareKiller
                 )
             } catch (_: Exception) {
                 // Keep the URL so the registered CloudStream extractor/WebView            s
                 // can still resolve an iframe that rejects a plain HTTP request. test commit 31
                 pages += "" to url
-                return@repeat
+                continue
             }
             pages += response.text to url
             val pageText = response.text
@@ -580,15 +585,16 @@ class AnimeWakuProvider : MainAPI() {
                     "markers=$markers scripts=$scriptUrls frames=$frameUrls"
             )
 
-            val iframe = response.document
-                .selectFirst("iframe#embedvideo, iframe[src], iframe[data-src]")
-                ?.let { it.attr("src").ifBlank { it.attr("data-src") } }
-
-            nextUrl = iframe?.let { raw ->
-                runCatching { URI(url).resolve(raw).toString() }.getOrNull()
-                    ?: fixUrlNull(raw)
-            }
-            referer = url
+            response.document
+                .select("iframe#embedvideo, iframe[src], iframe[data-src]")
+                .map { it.attr("src").ifBlank { it.attr("data-src") } }
+                .mapNotNull { raw ->
+                    runCatching { URI(url).resolve(raw).toString() }.getOrNull()
+                        ?: fixUrlNull(raw)
+                }
+                .filter { it.startsWith("http://") || it.startsWith("https://") }
+                .filterNot(visited::contains)
+                .forEach { pendingUrls += it }
         }
         return pages
     }
