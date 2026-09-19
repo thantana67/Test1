@@ -366,7 +366,12 @@ class AnimeWakuProvider : MainAPI() {
 
                     val extractorCandidates = listOf(extractorUrl, wrapperUrl).distinct()
                     for (candidateUrl in extractorCandidates) {
-                        if (loadExtractor(candidateUrl, "$mainUrl/", subtitleCallback, callback)) {
+                        var emittedLinks = 0
+                        loadExtractor(candidateUrl, "$mainUrl/", subtitleCallback) { link ->
+                            emittedLinks++
+                            callback(link)
+                        }
+                        if (emittedLinks > 0) {
                             Log.d("AnimeWaku", "Extractor loaded source=$nume url=${candidateUrl.take(300)}")
                             loaded = true
                             break
@@ -400,7 +405,12 @@ class AnimeWakuProvider : MainAPI() {
                     if (!loaded) {
                         val candidates = (listOf(extractorUrl, wrapperUrl) + pageCandidates).distinct()
                         for (candidateUrl in candidates) {
-                            if (loadExtractor(candidateUrl, data, subtitleCallback, callback)) {
+                            var emittedLinks = 0
+                            loadExtractor(candidateUrl, data, subtitleCallback) { link ->
+                                emittedLinks++
+                                callback(link)
+                            }
+                            if (emittedLinks > 0) {
                                 Log.d("AnimeWaku", "Nested extractor loaded source=$nume url=${candidateUrl.take(300)}")
                                 loaded = true
                                 break
