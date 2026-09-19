@@ -388,7 +388,7 @@ class AnimeWakuProvider : MainAPI() {
 
                             val linkType = mediaLinkType(videoUrl)
 
-                            callback.invoke(newExtractorLink(name, "$name Player $nume", videoUrl, linkType) {
+                            callback.invoke(newExtractorLink(name, playerLabel(nume, videoUrl), videoUrl, linkType) {
                                 quality = Qualities.P720.value
                                 referer = mediaReferer(videoUrl, pageUrl)
                             })
@@ -426,13 +426,17 @@ class AnimeWakuProvider : MainAPI() {
                                 Log.w("AnimeWaku", "WebView failed url=${candidateUrl.take(200)} error=${error.message}")
                             }.getOrNull() ?: continue
                             if (isBlockedPlayerUrl(resolved)) continue
+                            if (isUnsupportedImageHls(resolved)) {
+                                Log.w("AnimeWaku", "Unsupported custom image HLS source=$nume url=${resolved.take(300)}")
+                                continue
+                            }
                             if (!isLikelyMediaUrl(resolved)) continue
 
                             val linkType = mediaLinkType(resolved)
 
                             callback.invoke(newExtractorLink(
                                 name,
-                                "$name Player $nume",
+                                playerLabel(nume, resolved),
                                 resolved,
                                 linkType
                             ) {
@@ -582,6 +586,14 @@ class AnimeWakuProvider : MainAPI() {
                         ?: fixUrlNull(raw)
                 }
                 .filter { it.startsWith("http://") || it.startsWith("https://") }
+                .filterNot(visited::contains)
+                .forEach { pendingUrls += it }
+
+            Regex(
+                """https?://[^\"'<>\\\s]*doodee-player\.com[^\"'<>\\\s]*""",
+                RegexOption.IGNORE_CASE
+            ).findAll(pageText)
+                .map { it.value.replace("\\/", "/") }
                 .filterNot(visited::contains)
                 .forEach { pendingUrls += it }
         }
@@ -783,6 +795,18 @@ class AnimeWakuProvider : MainAPI() {
             ExtractorLinkType.M3U8
         } else {
             ExtractorLinkType.VIDEO
+        }
+    }
+
+    private fun isUnsupportedImageHls(url: String): Boolean {
+        return url.contains("cat.animenani.com/o/", ignoreCase = true)
+    }
+
+    private fun playerLabel(source: String, url: String): String {
+        return if (url.contains("doodee-player.com", ignoreCase = true)) {
+            "$name Player 2 (OK.ru)"
+        } else {
+            "$name Player $source"
         }
     }
 
