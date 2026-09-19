@@ -891,6 +891,13 @@ class AnimeWakuProvider : MainAPI() {
                     try { second.click(); } catch (ignored) {}
                 }
 
+                var frame = document.querySelector('iframe#embedvideo, iframe');
+                var frameUrl = frame && (frame.src || frame.getAttribute('src') || '');
+                if (frameUrl && /doodee-player\.com/i.test(frameUrl) && location.href !== frameUrl) {
+                    location.href = frameUrl;
+                    return;
+                }
+
                 document.querySelectorAll('video, audio, button, [role="button"], .jw-icon-display, .vjs-big-play-button')
                     .forEach(function (element) {
                         try { element.click(); } catch (ignored) {}
