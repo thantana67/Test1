@@ -396,9 +396,9 @@ class AnimeWakuProvider : MainAPI() {
 
                             callback.invoke(newExtractorLink(name, "$name Player $nume", videoUrl, linkType) {
                                 quality = Qualities.P720.value
-                                referer = pageUrl
+                                referer = mediaReferer(videoUrl, pageUrl)
                             })
-                            Log.d("AnimeWaku", "Direct media source=$nume type=$linkType url=${videoUrl.take(300)} referer=${pageUrl.take(200)}")
+                            Log.d("AnimeWaku", "Direct media source=$nume type=$linkType url=${videoUrl.take(300)} referer=${mediaReferer(videoUrl, pageUrl)}")
                             loaded = true
                         }
                     }
@@ -449,13 +449,14 @@ class AnimeWakuProvider : MainAPI() {
                                 linkType
                             ) {
                                 quality = Qualities.P720.value
-                                referer = candidateUrl
+                                referer = mediaReferer(resolved, candidateUrl)
                                 headers = mapOf(
                                     "User-Agent" to defaultHeaders["User-Agent"].orEmpty(),
-                                    "Referer" to candidateUrl
+                                    "Referer" to mediaReferer(resolved, candidateUrl),
+                                    "Origin" to mediaOrigin(resolved, candidateUrl)
                                 )
                             })
-                            Log.d("AnimeWaku", "WebView media source=$nume type=$linkType url=${resolved.take(300)} referer=${candidateUrl.take(200)}")
+                            Log.d("AnimeWaku", "WebView media source=$nume type=$linkType url=${resolved.take(300)} referer=${mediaReferer(resolved, candidateUrl)}")
                             loaded = true
                             break
                         }
@@ -784,6 +785,20 @@ class AnimeWakuProvider : MainAPI() {
             url.contains(".mp4", ignoreCase = true) ||
             url.contains(".txt", ignoreCase = true) ||
             mediaRequestRegex.containsMatchIn(url)
+    }
+
+    private fun mediaReferer(mediaUrl: String, fallback: String): String {
+        return when {
+            mediaUrl.contains("cat.animenani.com", ignoreCase = true) -> "https://nya.animenani.com/"
+            else -> fallback
+        }
+    }
+
+    private fun mediaOrigin(mediaUrl: String, fallback: String): String {
+        return runCatching {
+            val uri = URI(mediaReferer(mediaUrl, fallback))
+            "${uri.scheme}://${uri.host}"
+        }.getOrDefault(fallback.trimEnd('/'))
     }
 
     private fun resolvePlayerUrl(rawUrl: String, pageUrl: String): String? {
