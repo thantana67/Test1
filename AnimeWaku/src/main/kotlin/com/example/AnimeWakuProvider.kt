@@ -100,7 +100,8 @@ class AnimeWakuProvider : MainAPI() {
 
             val fallbackResults = mutableListOf<SearchResponse>()
             val seenFallback = hashSetOf<String>()
-            for (page in 1..10) {
+            var emptyPages = 0
+            for (page in 1..67) {
                 val catalogFallbackUrl = if (page == 1) "$mainUrl/anime/?get=anime"
                 else "$mainUrl/anime/page/$page/?get=anime"
                 val fallbackResponse = app.get(catalogFallbackUrl, headers = searchHeaders)
@@ -109,7 +110,8 @@ class AnimeWakuProvider : MainAPI() {
                     .filter { seenFallback.add(it.url) }
                 fallbackResults += pageResults
                 Log.d("AnimeWakuSearch", "Local fallback page=$page code=${fallbackResponse.code} pageMatches=${pageResults.size} total=${fallbackResults.size} title=${fallbackResponse.document.title()}")
-                if (pageResults.isNotEmpty() && page >= 3) break
+                if (pageResults.isEmpty()) emptyPages++ else emptyPages = 0
+                if (emptyPages >= 2 && page >= 3) break
             }
             fallbackResults
         } catch (error: Exception) {
