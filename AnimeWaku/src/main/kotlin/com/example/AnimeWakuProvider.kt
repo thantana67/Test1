@@ -386,13 +386,7 @@ class AnimeWakuProvider : MainAPI() {
                             val videoUrl = fixUrlNull(rawUrl) ?: return@forEach
                             if (isBlockedPlayerUrl(videoUrl) || !seenPlaylistUrls.add(videoUrl)) return@forEach
 
-                            val linkType = if (videoUrl.contains(".m3u8", ignoreCase = true) ||
-                                videoUrl.contains(".txt", ignoreCase = true)
-                            ) {
-                                ExtractorLinkType.M3U8
-                            } else {
-                                ExtractorLinkType.VIDEO
-                            }
+                            val linkType = mediaLinkType(videoUrl)
 
                             callback.invoke(newExtractorLink(name, "$name Player $nume", videoUrl, linkType) {
                                 quality = Qualities.P720.value
@@ -434,13 +428,7 @@ class AnimeWakuProvider : MainAPI() {
                             if (isBlockedPlayerUrl(resolved)) continue
                             if (!isLikelyMediaUrl(resolved)) continue
 
-                            val linkType = if (resolved.contains(".m3u8", ignoreCase = true) ||
-                                resolved.contains(".txt", ignoreCase = true)
-                            ) {
-                                ExtractorLinkType.M3U8
-                            } else {
-                                ExtractorLinkType.VIDEO
-                            }
+                            val linkType = mediaLinkType(resolved)
 
                             callback.invoke(newExtractorLink(
                                 name,
@@ -785,6 +773,17 @@ class AnimeWakuProvider : MainAPI() {
             url.contains(".mp4", ignoreCase = true) ||
             url.contains(".txt", ignoreCase = true) ||
             mediaRequestRegex.containsMatchIn(url)
+    }
+
+    private fun mediaLinkType(url: String): ExtractorLinkType {
+        return if (url.contains(".m3u8", ignoreCase = true) ||
+            url.contains(".txt", ignoreCase = true) ||
+            url.contains("cat.animenani.com/o/", ignoreCase = true)
+        ) {
+            ExtractorLinkType.M3U8
+        } else {
+            ExtractorLinkType.VIDEO
+        }
     }
 
     private fun mediaReferer(mediaUrl: String, fallback: String): String {
