@@ -738,7 +738,8 @@ class AnimeWakuProvider : MainAPI() {
                 for (var i = 0; i < values.length; i++) {
                     var value = values[i];
                     if (value && (/\.(m3u8|mp4|txt)([?#]|$)/i.test(value) ||
-                        /\/(stream|video|play|source|media)([\/?#]|$)/i.test(value))) return value;
+                        /\/(stream|video|play|source|media)([\/?#]|$)/i.test(value) ||
+                        /\/o\/[^\/?#]+\/v\/[^?#]+/i.test(value))) return value;
                 }
                 return null;
             }
@@ -772,7 +773,7 @@ class AnimeWakuProvider : MainAPI() {
     """.trimIndent()
 
     private val mediaRequestRegex = Regex(
-        """(?i)(?:\.(m3u8|mp4|txt)(?:[?#]|$)|/(stream|video|play|source|media)(?:[/?#]|$)|(?:stream|video|play|source|media)=)"""
+        """(?i)(?:\.(m3u8|mp4|txt)(?:[?#]|$)|/(stream|video|play|source|media)(?:[/?#]|$)|/o/[^/?#]+/v/[^?#]+|(?:stream|video|play|source|media)=)"""
     )
 
     private fun isLikelyMediaUrl(url: String): Boolean {
