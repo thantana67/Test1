@@ -48,13 +48,15 @@ class AnimeWakuProvider : MainAPI() {
         return try {
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
             val apiUrl = "$mainUrl/wp-json/wp/v2/search?search=$encodedQuery&per_page=30"
-            val apiResults = runCatching {
+            val apiResults = try {
                 val body = app.get(
                     apiUrl,
                     headers = defaultHeaders + mapOf("Accept" to "application/json")
                 ).text
                 parseWordPressSearch(body)
-            }.getOrDefault(emptyList())
+            } catch (_: Exception) {
+                emptyList()
+            }
 
             if (apiResults.isNotEmpty()) return apiResults
 
@@ -71,7 +73,7 @@ class AnimeWakuProvider : MainAPI() {
         }
     }
 
-    private fun parseWordPressSearch(body: String): List<SearchResponse> {
+    private suspend fun parseWordPressSearch(body: String): List<SearchResponse> {
         val json = runCatching { org.json.JSONArray(body) }.getOrNull() ?: return emptyList()
         val results = mutableListOf<SearchResponse>()
         val seen = hashSetOf<String>()
@@ -100,9 +102,7 @@ class AnimeWakuProvider : MainAPI() {
                 element.selectFirst("img")?.attr("alt")?.trim().orEmpty()
             }.replace(Regex("\\s+"), " ").trim()
             if (title.isBlank()) return@forEach
-            val poster = element.closest("article, .item, .post")
-                ?.let(::findPoster)
-                ?: findPoster(href)
+            val poster = element.closest("article, .item, .post")?.let(::findPoster)
             results += newAnimeSearchResponse(title, href, TvType.Anime) { posterUrl = poster }
         }
         return results
@@ -138,7 +138,7 @@ class AnimeWakuProvider : MainAPI() {
         }
     }
 
-    private fun findPoster(url: String, document: org.jsoup.nodes.Document? = null): String? {
+    private suspend fun findPoster(url: String, document: org.jsoup.nodes.Document? = null): String? {
         val doc = document ?: runCatching { app.get(url, headers = defaultHeaders).document }.getOrNull()
             ?: return null
         val image = doc.select(
