@@ -453,6 +453,41 @@ class AnimeWakuProvider : MainAPI() {
                             break
                         }
                     }
+
+                    if (!loaded) {
+                        val secondPlayerResolver = WebViewResolver(
+                            interceptUrl = mediaRequestRegex,
+                            additionalUrls = listOf(mediaRequestRegex),
+                            script = secondPlayerResolverScript,
+                            useOkhttp = false,
+                            userAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/131.0.0.0 Mobile Safari/537.36",
+                            timeout = 120_000L
+                        )
+
+                        for (candidateUrl in listOf(wrapperUrl).distinct()) {
+                            val resolved = runCatching {
+                                app.get(candidateUrl, referer = data, interceptor = secondPlayerResolver).url
+                            }.onFailure { error ->
+                                Log.w("AnimeWaku", "Player 2 WebView failed url=${candidateUrl.take(200)} error=${error.message}")
+                            }.getOrNull() ?: continue
+                            if (isBlockedPlayerUrl(resolved) || isUnsupportedImageHls(resolved)) continue
+                            if (!isLikelyMediaUrl(resolved)) continue
+
+                            val linkType = mediaLinkType(resolved)
+                            callback.invoke(newExtractorLink(name, playerLabel(nume, resolved), resolved, linkType) {
+                                quality = Qualities.P720.value
+                                referer = mediaReferer(resolved, candidateUrl)
+                                headers = mapOf(
+                                    "User-Agent" to defaultHeaders["User-Agent"].orEmpty(),
+                                    "Referer" to mediaReferer(resolved, candidateUrl),
+                                    "Origin" to mediaOrigin(resolved, candidateUrl)
+                                )
+                            })
+                            Log.d("AnimeWaku", "Player 2 media source=$nume type=$linkType url=${resolved.take(300)}")
+                            loaded = true
+                            break
+                        }
+                    }
                 } catch (error: Exception) {
                     Log.w("AnimeWaku", "Player source failed post=$postId source=$nume: ${error.message}")
                     continue
@@ -779,6 +814,36 @@ class AnimeWakuProvider : MainAPI() {
     private val mediaRequestRegex = Regex(
         """(?i)(?:\.(m3u8|mp4|txt)(?:[?#]|$)|/(stream|video|play|source|media)(?:[/?#]|$)|/o/[^/?#]+/v/[^?#]+|(?:stream|video|play|source|media)=)"""
     )
+
+    private val secondPlayerResolverScript = """
+        (function () {
+            if (window.__animeWakuSecondPlayerStarted) return;
+            window.__animeWakuSecondPlayerStarted = true;
+
+            function clickSecondPlayer() {
+                var second = document.querySelector(
+                    '#list-server-more .list-server-items li:nth-child(2), .list-server-items li:nth-child(2)'
+                );
+                if (second) {
+                    try { second.click(); } catch (ignored) {}
+                }
+
+                document.querySelectorAll('video, audio, button, [role="button"], .jw-icon-display, .vjs-big-play-button')
+                    .forEach(function (element) {
+                        try { element.click(); } catch (ignored) {}
+                        try { if (element.play) element.play().catch(function () {}); } catch (ignored) {}
+                    });
+            }
+
+            clickSecondPlayer();
+            new MutationObserver(clickSecondPlayer).observe(document.documentElement, {
+                childList: true,
+                subtree: true,
+                attributes: true
+            });
+            setInterval(clickSecondPlayer, 1000);
+        })();
+    """.trimIndent()
 
     private fun isLikelyMediaUrl(url: String): Boolean {
         return url.contains(".m3u8", ignoreCase = true) ||
