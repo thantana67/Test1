@@ -49,26 +49,40 @@ class AnimeWakuProvider : MainAPI() {
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
             val apiUrl = "$mainUrl/wp-json/wp/v2/search?search=$encodedQuery&per_page=30"
             val apiResults = try {
-                val body = app.get(
+                val response = app.get(
                     apiUrl,
                     headers = defaultHeaders + mapOf("Accept" to "application/json")
-                ).text
-                parseWordPressSearch(body)
-            } catch (_: Exception) {
+                )
+                Log.d("AnimeWakuSearch", "REST url=$apiUrl code=${response.code} length=${response.text.length} body=${response.text.take(200)}")
+                parseWordPressSearch(response.text)
+            } catch (error: Exception) {
+                Log.w("AnimeWakuSearch", "REST failed error=${error.message}")
                 emptyList()
             }
 
+            Log.d("AnimeWakuSearch", "REST results=${apiResults.size}")
             if (apiResults.isNotEmpty()) return apiResults
 
             val catalogUrl = "$mainUrl/anime/?get=anime&s=$encodedQuery"
-            val catalogResults = runCatching {
-                parseAnimeLinks(app.get(catalogUrl, headers = defaultHeaders).document)
-            }.getOrDefault(emptyList())
+            val catalogResults = try {
+                val response = app.get(catalogUrl, headers = defaultHeaders)
+                val results = parseAnimeLinks(response.document)
+                Log.d("AnimeWakuSearch", "Catalog url=$catalogUrl code=${response.code} length=${response.text.length} results=${results.size}")
+                results
+            } catch (error: Exception) {
+                Log.w("AnimeWakuSearch", "Catalog failed error=${error.message}")
+                emptyList()
+            }
             if (catalogResults.isNotEmpty()) return catalogResults
 
-            val url = "$mainUrl/?s=$encodedQuery"
-            parseAnimeLinks(app.get(url, headers = defaultHeaders).document)
-        } catch (_: Exception) {
+            val catalogFallbackUrl = "$mainUrl/anime/?get=anime"
+            val fallbackResponse = app.get(catalogFallbackUrl, headers = defaultHeaders)
+            val fallbackResults = parseAnimeLinks(fallbackResponse.document)
+                .filter { it.name.contains(query, ignoreCase = true) }
+            Log.d("AnimeWakuSearch", "Local fallback url=$catalogFallbackUrl code=${fallbackResponse.code} all=${fallbackResults.size} query=$query")
+            fallbackResults
+        } catch (error: Exception) {
+            Log.e("AnimeWakuSearch", "Search failed query=$query error=${error.message}")
             emptyList()
         }
     }
@@ -81,10 +95,17 @@ class AnimeWakuProvider : MainAPI() {
         for (index in 0 until json.length()) {
             val item = json.optJSONObject(index) ?: continue
             val url = fixUrlNull(item.optString("url")) ?: continue
-            if (!url.contains("/anime/", ignoreCase = true) || !seen.add(url)) continue
+            if (!url.contains("/anime/", ignoreCase = true) || !seen.add(url)) {
+                Log.d("AnimeWakuSearch", "REST skip index=$index url=$url")
+                continue
+            }
             val title = Jsoup.parse(item.optString("title")).text().trim()
-            if (title.isBlank()) continue
+            if (title.isBlank()) {
+                Log.d("AnimeWakuSearch", "REST skip index=$index reason=blank-title url=$url")
+                continue
+            }
             val poster = findPoster(url)
+            Log.d("AnimeWakuSearch", "REST item title=$title url=$url poster=${poster != null}")
             results += newAnimeSearchResponse(title, url, TvType.Anime) {
                 posterUrl = poster
             }
