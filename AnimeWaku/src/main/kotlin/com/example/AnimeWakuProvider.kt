@@ -96,10 +96,12 @@ class AnimeWakuProvider : MainAPI() {
                 Log.w("AnimeWakuSearch", "Catalog failed error=${error.message}")
                 emptyList()
             }
-            if (catalogResults.isNotEmpty()) return catalogResults
 
             val fallbackResults = mutableListOf<SearchResponse>()
-            val seenFallback = hashSetOf<String>()
+            val seenFallback = hashSetOf<String>().apply {
+                catalogResults.mapTo(this) { it.url }
+            }
+            fallbackResults += catalogResults
             var emptyPages = 0
             for (page in 1..67) {
                 val catalogFallbackUrl = if (page == 1) "$mainUrl/anime/?get=anime"
@@ -221,9 +223,9 @@ class AnimeWakuProvider : MainAPI() {
             """.trimIndent()
         ).mapNotNull { element ->
             val raw = if (element.tagName() == "meta") element.attr("content")
-            else listOf("data-lazy-src", "data-src", "data-original", "src", "content")
+            else listOf("data-lazy-src", "data-src", "data-original", "data-bg", "data-background-image", "src")
                 .asSequence().map { element.attr(it) }.firstOrNull { it.isNotBlank() }.orEmpty()
-            fixUrlNull(raw)?.takeUnless(::isBadPoster)
+            extractImageUrl(raw)?.takeUnless(::isBadPoster)
         }.firstOrNull()
         return image
     }
@@ -232,11 +234,18 @@ class AnimeWakuProvider : MainAPI() {
         val image = element.select("img, meta[property=og:image], meta[name=twitter:image]")
             .mapNotNull { imageElement ->
                 val raw = if (imageElement.tagName() == "meta") imageElement.attr("content")
-                else listOf("data-lazy-src", "data-src", "data-original", "src")
+                else listOf("data-lazy-src", "data-src", "data-original", "data-bg", "data-background-image", "src")
                     .asSequence().map { imageElement.attr(it) }.firstOrNull { it.isNotBlank() }.orEmpty()
-                fixUrlNull(raw)?.takeUnless(::isBadPoster)
+                extractImageUrl(raw)?.takeUnless(::isBadPoster)
             }.firstOrNull()
         return image
+    }
+
+    private fun extractImageUrl(raw: String): String? {
+        val value = raw.trim()
+        if (value.isBlank() || value.startsWith("data:", ignoreCase = true)) return null
+        val background = Regex("""url\(['\"]?([^'\")]+)""").find(value)?.groupValues?.get(1)
+        return fixUrlNull(background ?: value)
     }
 
     private fun isBadPoster(url: String): Boolean {
@@ -244,7 +253,9 @@ class AnimeWakuProvider : MainAPI() {
         return value.contains("/ads/") || value.contains("/ad/") ||
             value.contains("banner") || value.contains("logo") ||
             value.contains("favicon") || value.contains("placeholder") ||
-            value.contains("avatar") || value.endsWith(".gif")
+            value.contains("avatar") || value.contains("no-image") ||
+            value.contains("default-image") || value.contains("lazyload") ||
+            value.endsWith(".gif") || value.endsWith(".svg")
     }
 //        subtitleCallback: (SubtitleFile) -> Unit,
 //        callback: (ExtractorLink) -> Unit
