@@ -563,6 +563,7 @@ class AnimeWakuProvider : MainAPI() {
                             html.contains("challenge", ignoreCase = true) ||
                             html.contains("just a moment", ignoreCase = true)
                     }
+                    Log.d("AnimeWaku", "Player challenge source=$nume detected=$playerHasChallenge pages=${pages.size}")
 
                     if (!loaded && !playerHasChallenge) {
                         val resolver = WebViewResolver(
@@ -682,6 +683,9 @@ class AnimeWakuProvider : MainAPI() {
                             Log.d("AnimeWaku", "Player 2 media source=$nume type=$linkType url=${resolved.take(300)}")
                             loaded = true
                             break
+                        }
+                        if (!loaded) {
+                            Log.w("AnimeWaku", "Player 2 unavailable source=$nume challenge=$playerHasChallenge")
                         }
                     }
                 } catch (error: Exception) {
